@@ -177,7 +177,7 @@ function ring(c) {
 function renderTeam(filter) {
   const box = $("team");
   if (!teamLoaded) return;
-  if (!team.length) { box.innerHTML = `<div class="card empty"><b>No employees yet</b>${isAdmin() ? "Tap Manage to add the people on the board." : "An app admin adds the employees. Muneer or Amogelang sign in with Manager sign in, then tap Manage."}</div>`; return; }
+  if (!team.length) { box.innerHTML = `<div class="card empty"><b>No employees yet</b>${isAdmin() ? "Tap Manage to add the people on the board." : "Ask admin to add you to the board."}</div>`; return; }
   const mine = myEmp();
   if (!isManager() && !mine) { box.innerHTML = `<div class="card empty"><b>Choose your name to start</b>Tap "I am", choose your name and type your PIN. The first time, you make your own 4-digit PIN.</div>`; return; }
   const people = isManager() ? team.filter(p => !filter || p.id === filter) : [mine];
@@ -248,10 +248,10 @@ $("pinForm").onsubmit = async e => {
     $("pinDlg").hidden = true;
   } catch (err) {
     const c = err?.code || "";
-    $("pErr").textContent = c.includes("too-many") ? "Too many tries. Wait a few minutes, or ask Muneer or Amogelang to reset your PIN."
+    $("pErr").textContent = c.includes("too-many") ? "Too many tries. Wait a few minutes, or ask admin to reset your PIN."
       : c.includes("network") ? "No signal. Signing in needs signal the first time."
-      : c === "permission-denied" ? "Someone has already made a PIN for this name. Ask Muneer or Amogelang to reset it."
-      : first ? "The PIN couldn't be made. Try again." : "Wrong PIN. If you forgot it, ask Muneer or Amogelang to reset it.";
+      : c === "permission-denied" ? "Someone has already made a PIN for this name. Ask admin to reset it."
+      : first ? "The PIN couldn't be made. Try again." : "Wrong PIN. If you forgot it, ask admin to reset it.";
   }
 };
 $("copy").onclick = async () => {

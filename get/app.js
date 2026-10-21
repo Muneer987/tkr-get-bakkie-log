@@ -48,10 +48,10 @@ const store = {
     });
   },
   all() { return this.tx("shifts", "readonly", os => os.getAll()); },
-  put(s) { return this.tx("shifts", "readwrite", os => os.put(s)); },
+  put(s) { if (typeof markShift === "function") markShift(s.id); return this.tx("shifts", "readwrite", os => os.put(s)); },
   del(id) { return this.tx("shifts", "readwrite", os => os.delete(id)); },
   photo(id) { return this.tx("photos", "readonly", os => os.get(id)); },
-  putPhoto(p) { return this.tx("photos", "readwrite", os => os.put(p)); },
+  putPhoto(p) { if (typeof markPhoto === "function") markPhoto(p.id); return this.tx("photos", "readwrite", os => os.put(p)); },
   getMeta(id) { return this.tx("meta", "readonly", os => os.get(id)); },
   putMeta(m) { return this.tx("meta", "readwrite", os => os.put(m)); },
   delPhoto(id) { return this.tx("photos", "readwrite", os => os.delete(id)); },
@@ -125,6 +125,7 @@ function syncTimes(s) { const t = tripsOf(s); s.timeOut = t[0]?.out || ""; s.tim
 /* ---------- clear after export: keeps the latest shift (for the shift-change carry-over) and any open shift ---------- */
 let lastExport = null;
 function clearable() {
+  if (waiting()) return [];
   if (!lastExport) return [];
   const keep = sorted(shifts)[0]?.id;
   return shifts.filter(s => lastExport.ids.includes(s.id) && s.id !== keep && s.closed);
@@ -153,7 +154,7 @@ function render() {
   if (view === "shifts") body = `<div class="row" style="margin-bottom:14px;align-items:flex-end">${dates}
       <button class="primary" id="newShift" style="flex:1 1 220px">Start shift / shift change</button></div>` + shiftList(inRange());
   else if (view === "log") body = `<div class="row" style="margin-bottom:14px;align-items:flex-end">${dates}
-      ${canExport() ? `<button class="primary" id="xlsx" style="flex:1 1 200px">Export to Excel (with photos)</button>` : ""}</div>` + exportGate() + clearCard() + logTable(inRange());
+      ${canExport() ? `<button class="primary" id="xlsx" style="flex:1 1 200px">Combined report – all GET operators</button>` : ""}</div>` + syncLine() + exportGate() + clearCard() + logTable(inRange());
   else body = backupView();
   app.innerHTML = `<div class="tabs" role="tablist">${tab("shifts", "Shifts")}${tab("log", "Movement log")}${tab("backup", "Backup")}</div>${body}`;
 }
@@ -195,7 +196,7 @@ function backupView() {
       <h2>Backup</h2>
       <p style="margin-top:0">The records are saved on this device only. Make a backup at least once a week and send it on WhatsApp or email. If this device is lost or replaced, open the app on the new device and restore the backup file.</p>
       <p class="muted">${shifts.length} shift${shifts.length === 1 ? "" : "s"} on this device. ${last ? "Last backup: " + esc(last) + "." : "No backup made yet on this device."}</p>
-      ${canExport() ? "" : `<p class="muted">Making a backup file needs an admin, or an admin's permission (Movement log, Export).</p>`}
+      ${canExport() ? "" : `<p class="muted">Making a backup file needs admin. Ask admin in Movement log.</p>`}
       <div class="row"><button class="primary" id="backup" ${canExport() ? "" : "disabled"}>Make backup file</button>
       <label class="row" style="flex-direction:row"><span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400"></span>
         <button id="restoreBtn" type="button">Restore from backup file</button><input type="file" id="restoreFile" accept=".json,application/json" hidden></label></div>
@@ -376,7 +377,7 @@ function editField(path, val) {
 /* ---------- branded Excel export (TKR black and gold, logo, photos inside the file) ---------- */
 const XC = { BLACK: "FF111111", HEAD: "FF262626", GOLD: "FFD4A12A", CREAM: "FFFFF8E6", WHITE: "FFFFFFFF", GRID: "FFD9D3C5", MUTED: "FF6B6558" };
 const MOVE_FILL = { received: "FFDDF1E3", fitted: "FFFFF2CC", returned: "FFDDF1E3", back: "FFEFEDE7", lost: "FFF8DDD8" };
-async function buildBrandedGET(list, who) {
+async function buildBrandedGET(list, who, photoBlob = async id => (await store.photo(id))?.blob) {
   const ExcelJS = window.ExcelJS, wb = new ExcelJS.Workbook(); wb.creator = "TKR Operations"; wb.created = new Date();
   const rows = logRows(list), chron = list.slice().reverse(), period = `${fmtDate(range.from)} to ${fmtDate(range.to)}`;
   let logo = null; try { logo = wb.addImage({ buffer: await (await fetch("../icons/icon-512.png")).arrayBuffer(), extension: "png" }); } catch {}
@@ -413,7 +414,10 @@ async function buildBrandedGET(list, who) {
   const t = {}; ITEMS.forEach(i => t[i] = { received: 0, fitted: 0, returned: 0, back: 0, lost: 0 });
   const perRig = {}; RIGS.forEach(r => { perRig[r] = {}; ITEMS.forEach(i => perRig[r][i] = 0); });
   rows.forEach(({ m }) => { if (t[m.item]) t[m.item][m.type] += Number(m.qty) || 0; if (m.type === "fitted" && perRig[m.rig]) perRig[m.rig][m.item] += Number(m.qty) || 0; });
-  const lastShift = list[0], lb = lastShift ? balance(lastShift) : null;
+  const lastShift = list[0];
+  // In the bakkies now: each operator's latest shift added together (list is newest first)
+  const seen = new Set(), lb = {}; ITEMS.forEach(i => lb[i] = { end: 0 });
+  list.forEach(x => { const who = x.ownerUid || x.operator || "one"; if (seen.has(who)) return; seen.add(who); const b = balance(x); ITEMS.forEach(i => lb[i].end += b[i].end); });
   const ws1 = sheet("Sum up", [26, 16, 14, 16, 16, 13, 18], "GET Bakkie Log – Sum up");
   [["Shifts logged", list.length], ["Movements logged", rows.length], ["Photos", nPhotos]].forEach(([k, v], i) => {
     const c = ws1.getCell(7, 1 + i * 2), d = ws1.getCell(8, 1 + i * 2);
@@ -421,8 +425,8 @@ async function buildBrandedGET(list, who) {
     d.value = v; d.font = { name: "Arial", size: 20, bold: true, color: { argb: XC.BLACK } };
   });
   ws1.getRow(8).height = 28;
-  header(ws1, 10, ["Item", "Received from store", "Fitted on rigs", "Old items back", "Handed back to store", "Lost in hole", "In bakkie (last shift)"]);
-  ITEMS.forEach((i, n) => line(ws1, 11 + n, [i, t[i].received, t[i].fitted, t[i].returned, t[i].back, t[i].lost, lb ? lb[i].end : 0], n));
+  header(ws1, 10, ["Item", "Received from store", "Fitted on rigs", "Old items back", "Handed back to store", "Lost in hole", "In the bakkies now"]);
+  ITEMS.forEach((i, n) => line(ws1, 11 + n, [i, t[i].received, t[i].fitted, t[i].returned, t[i].back, t[i].lost, lb[i].end], n));
   let r = 11 + ITEMS.length + 1;
   title(ws1, r++, "Fitted per rig");
   header(ws1, r++, ["Rig", ...ITEMS]);
@@ -443,9 +447,9 @@ async function buildBrandedGET(list, who) {
     const row = line(ws2, r, [fmtDate(s.date), s.shift, tripNo(s, m.trip) || "", m.time || "", m.onBoard || "", TYPES[m.type]?.label || m.type, m.rig || "", m.item, Number(m.qty) || 0, m.itemNo || "", m.oldNo || "", m.block || "", m.by || "", m.loggedBy || "", s.operator || "", "", "", ""], k++, { h: ph.length ? 60 : 20 });
     row.getCell(6).fill = fill(MOVE_FILL[m.type] || XC.CREAM); row.getCell(6).font = { name: "Arial", size: 10, bold: true };
     for (let i = 0; i < ph.length; i++) {
-      const p = await store.photo(ph[i]); if (!p) continue;
-      const buf = await p.blob.arrayBuffer(), img = wb.addImage({ buffer: buf, extension: "jpeg" });
-      let w = 1, h = 1; try { const bm = await createImageBitmap(p.blob); w = bm.width; h = bm.height; bm.close?.(); } catch {}
+      const blob = await photoBlob(ph[i]); if (!blob) continue;
+      const buf = await blob.arrayBuffer(), img = wb.addImage({ buffer: buf, extension: "jpeg" });
+      let w = 1, h = 1; try { const bm = await createImageBitmap(blob); w = bm.width; h = bm.height; bm.close?.(); } catch {}
       photoList.push({ img, w, h, cap: `${fmtDate(s.date)} ${s.shift} ${m.time || ""} · ${TYPES[m.type]?.label || m.type} · ${m.qty} × ${m.item}${m.itemNo ? " · No. " + m.itemNo : ""}${m.rig ? " · " + m.rig : ""}`, name: names[i] });
       if (i < 3) { const th = 72, tw = Math.min(96, Math.round(th * w / h)); ws2.addImage(img, { tl: { col: 15 + i + 0.05, row: r - 1 + 0.05 }, ext: { width: tw, height: th } }); }
     }
@@ -505,11 +509,11 @@ function exportGate() {
   if (canExport()) return `<div class="info">Export allowed until ${new Date(exportPass.until).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" })} (${esc(exportPass.by)}).</div>`;
   const req = exportReq && exportReq.op === opNow?.uid ? exportReq : null;
   return `<div class="card">
-    <h2>Exporting is done by an admin</h2>
-    <p class="muted" style="margin-top:0">Muneer or Amogelang can sign in here to export, or you can ask them for permission. Both need signal.</p>
-    ${req ? `<p>Your request for ${fmtDate(req.from)} to ${fmtDate(req.to)} is <b>${req.status === "approved" ? "approved" : req.status === "declined" ? "declined" : "waiting for an admin"}</b>.</p>` : ""}
+    <h2>Exporting is done by admin</h2>
+    <p class="muted" style="margin-top:0">An admin can sign in here to export, or you can ask admin for permission. Both need signal.</p>
+    ${req ? `<p>Your request for ${fmtDate(req.from)} to ${fmtDate(req.to)} is <b>${req.status === "approved" ? "approved" : req.status === "declined" ? "declined" : "waiting for admin"}</b>.</p>` : ""}
     <div class="row">
-      <button class="primary" id="askExport">${req && req.status === "pending" ? "Check again" : "Ask an admin for permission"}</button>
+      <button class="primary" id="askExport">${req && req.status === "pending" ? "Check again" : "Ask admin for permission"}</button>
       <button id="adminExport">Admin: sign in to export</button>
     </div>
     ${showAdminExport ? `<form id="adminExportForm" class="grid" style="margin-top:12px" autocomplete="off">
@@ -531,12 +535,12 @@ async function askOrCheckExport() {
       if (!d.exists()) { exportReq = null; saveReq(); exportMsg = "The request was removed. Ask again."; render(); return; }
       const v = d.data(); req.status = v.status; saveReq();
       if (v.status === "approved") { exportPass = { by: "approved by " + (v.approvedBy || "an admin"), until: Math.min((v.approvedAt || Date.now()) + 24 * 3600e3, Date.now() + 24 * 3600e3) }; range.from = v.from; range.to = v.to; }
-      else exportMsg = v.status === "declined" ? "An admin declined the request." : "Still waiting for an admin.";
+      else exportMsg = v.status === "declined" ? "Admin declined the request." : "Still waiting for admin.";
       render(); return;
     }
     const ref = await fb.addDoc(fb.collection(fbDb, "getExportRequests"), { opUid: opNow.uid, opName: opNow.name, from: range.from, to: range.to, status: "pending", createdAt: Date.now() });
     exportReq = { id: ref.id, op: opNow.uid, from: range.from, to: range.to, status: "pending" }; saveReq();
-    exportMsg = "Request sent. Tap Check again once an admin has approved it."; render();
+    exportMsg = "Request sent. Tap Check again once admin has approved it."; render();
   } catch (x) { exportMsg = "That didn't work. Check the signal and try again."; render(); }
 }
 
@@ -576,14 +580,18 @@ app.addEventListener("click", async e => {
   if (t.id === "xlsx") {
     if (!canExport()) { render(); return; }
     try { await loadLib("../lib/exceljs.min.js"); } catch { alert("The export needs the app to be opened once with signal."); return; }
+    if (!navigator.onLine) { alert("The combined report needs signal."); return; }
+    await syncNow();
     const list = inRange();
-    if (!list.length) { alert("There are no shifts in these dates."); return; }
-    t.disabled = true; t.textContent = "Making the Excel file…";
+    t.disabled = true; t.textContent = "Making the combined report…";
     try {
-      const out = await buildBrandedGET(list, exportPass.by);
+      const src = exportPass.db || fbDb;
+      const { list: all, photoBlob } = await combinedData(src);
+      if (!all.length) { alert("There are no GET shifts online for these dates yet."); render(); return; }
+      const out = await buildBrandedGET(all, exportPass.by + " · all GET operators", photoBlob);
       const name = `TKR_GET_Bakkie_Log_${fmtDate(range.from).replace(/\//g, "-")}_to_${fmtDate(range.to).replace(/\//g, "-")}.xlsx`;
       const r = await shareOrDownload(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), name);
-      if (r !== "cancelled") lastExport = { ids: list.map(s => s.id), from: range.from, to: range.to, photos: true };
+      if (r !== "cancelled") lastExport = { ids: all.map(s => s.id), from: range.from, to: range.to, photos: true };
     } catch (x) { console.warn(x); alert("The Excel file couldn't be made. Try a shorter date range."); }
     render(); return;
   }
@@ -606,7 +614,7 @@ app.addEventListener("click", async e => {
   if (t.id === "takePhoto") { photoTarget = null; $("#camera").click(); return; }
   if (t.dataset.addphoto) { photoTarget = t.dataset.addphoto; $("#camera").click(); return; }
   if (t.id === "backup") {
-    if (!canExport()) { alert("Making a backup file is done by an admin, or with an admin's permission. Go to Movement log to ask."); return; }
+    if (!canExport()) { alert("Making a backup file needs admin. Go to Movement log to ask admin."); return; }
     t.disabled = true; t.textContent = "Making backup…";
     const photos = [];
     for (const s of shifts) for (const m of s.moves || []) for (const id of m.photos || []) { const p = await store.photo(id); if (p) photos.push({ id, data: await blobToDataURL(p.blob) }); }
@@ -620,11 +628,11 @@ app.addEventListener("click", async e => {
     const gone = (current.moves || []).find(m => m.id === t.dataset.del);
     if (gone?.photos?.length && !confirm("Remove this movement and its photos?")) return;
     current.moves = (current.moves || []).filter(m => m.id !== t.dataset.del);
-    await save("Movement removed"); await deletePhotos(gone?.photos); render(); return;
+    await save("Movement removed"); await deletePhotos(gone?.photos); markDelPhotos(gone?.photos); render(); return;
   }
   if (t.id === "delShift") {
     if (!confirm("Delete this whole shift and all its movements and photos? This cannot be undone.")) return;
-    await store.del(current.id); await deletePhotos((current.moves || []).flatMap(m => m.photos || []));
+    await store.del(current.id); await deletePhotos((current.moves || []).flatMap(m => m.photos || [])); markDelShift(current.id, (current.moves || []).flatMap(m => m.photos || []));
     shifts = shifts.filter(x => x.id !== current.id); clearDrafts(); current = null; render(); return;
   }
   if (t.id === "close") {
@@ -663,9 +671,9 @@ app.addEventListener("submit", async e => {
       await firebase();
       const tmp = fb.initializeApp(FIREBASE_CONFIG, "get-admin-" + Date.now()), a = fb.getAuth(tmp);
       const cred = await fb.signInWithEmailAndPassword(a, $("#aeEmail").value.trim(), $("#aePass").value);
-      const em = (cred.user.email || "").toLowerCase(); await fb.signOut(a).catch(() => {}); fb.deleteApp(tmp).catch(() => {});
-      if (!["muneer@tkroperations.com", "amogelang@tkroperations.com"].includes(em)) { exportMsg = "Only Muneer or Amogelang can export."; render(); return; }
-      exportPass = { by: em, until: Date.now() + 15 * 60e3 }; exportMsg = ""; showAdminExport = false; render();
+      const em = (cred.user.email || "").toLowerCase();
+      if (!["muneer@tkroperations.com", "amogelang@tkroperations.com"].includes(em)) { await fb.signOut(a).catch(() => {}); fb.deleteApp(tmp).catch(() => {}); exportMsg = "Only an admin can export."; render(); return; }
+      exportPass = { by: em, until: Date.now() + 15 * 60e3, db: fb.initializeFirestore(tmp, {}) }; exportMsg = ""; showAdminExport = false; render();
     } catch (x) { exportMsg = !navigator.onLine ? "No signal. Signing in needs signal." : "Email or password is wrong."; render(); }
     return;
   }
@@ -711,7 +719,7 @@ $("#viewerClose").addEventListener("click", () => { $("#viewer").hidden = true; 
 $("#viewerDel").addEventListener("click", async () => {
   if (!viewing || !confirm("Delete this photo?")) return;
   if (viewing.draft !== undefined) { const [p] = draftPhotos.splice(viewing.draft, 1); if (p) URL.revokeObjectURL(p.url); }
-  else { const m = (current.moves || []).find(x => x.id === viewing.move); if (m) { m.photos = (m.photos || []).filter(id => id !== viewing.id); await save("Photo deleted"); await deletePhotos([viewing.id]); } }
+  else { const m = (current.moves || []).find(x => x.id === viewing.move); if (m) { m.photos = (m.photos || []).filter(id => id !== viewing.id); await save("Photo deleted"); await deletePhotos([viewing.id]); markDelPhotos([viewing.id]); } }
   $("#viewer").hidden = true; viewing = null; render();
 });
 addEventListener("pagehide", () => { if (saveTimer && current) save(); });
@@ -722,6 +730,63 @@ let installEvt = null;
 addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; $("#installBtn").hidden = false; });
 $("#installBtn").addEventListener("click", async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; $("#installBtn").hidden = true; });
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("../sw.js", { scope: "../", updateViaCache: "none" }).then(r => r.update()).catch(() => {}));
+
+/* ---------- sending GET records online, so admins can export one combined report for all operators ----------
+   Every save is kept on the device first. Changes are sent when there is signal and an approved operator is signed in.
+   Photos go up as smaller copies (about 50 KB) to stay on Firebase's free plan; the tablet keeps the full photo. */
+let dirty = { shifts: [], photos: [], delShifts: [], delPhotos: [] }, syncing = false, syncNote = "";
+async function loadDirty() { try { const d = await store.getMeta("dirty"); if (d) dirty = { shifts: [], photos: [], delShifts: [], delPhotos: [], ...d }; } catch {} }
+async function saveDirty() { try { await store.putMeta({ id: "dirty", ...dirty }); } catch {} }
+const addTo = (k, id) => { if (id && !dirty[k].includes(id)) dirty[k].push(id); };
+function markShift(id) { addTo("shifts", id); saveDirty(); scheduleSync(); }
+function markPhoto(id) { addTo("photos", id); saveDirty(); scheduleSync(); }
+function markDelShift(id, photoIds = []) { addTo("delShifts", id); dirty.shifts = dirty.shifts.filter(x => x !== id); photoIds.forEach(p => { addTo("delPhotos", p); dirty.photos = dirty.photos.filter(x => x !== p); }); saveDirty(); scheduleSync(); }
+function markDelPhotos(ids = []) { ids.forEach(p => { addTo("delPhotos", p); dirty.photos = dirty.photos.filter(x => x !== p); }); saveDirty(); scheduleSync(); }
+const waiting = () => dirty.shifts.length + dirty.photos.length + dirty.delShifts.length + dirty.delPhotos.length;
+let syncTimer = null;
+function scheduleSync() { clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, 2500); }
+async function smallPhoto(blob) {
+  const bm = await createImageBitmap(blob), k = Math.min(1, 640 / Math.max(bm.width, bm.height));
+  const c = document.createElement("canvas"); c.width = Math.round(bm.width * k); c.height = Math.round(bm.height * k);
+  c.getContext("2d").drawImage(bm, 0, 0, c.width, c.height); bm.close?.();
+  return new Promise(res => c.toBlob(b => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.readAsDataURL(b); }, "image/jpeg", 0.6));
+}
+async function syncNow() {
+  if (syncing || !waiting() || !navigator.onLine || !opNow || !(await firebase())) return;
+  await fbAuth.authStateReady?.(); if (fbAuth.currentUser?.uid !== opNow.uid) return;
+  syncing = true;
+  try {
+    const shiftOf = pid => shifts.find(x => (x.moves || []).some(m => (m.photos || []).includes(pid)));
+    for (const id of [...dirty.delPhotos]) { await fb.deleteDoc(fb.doc(fbDb, "getPhotos", id)); dirty.delPhotos = dirty.delPhotos.filter(x => x !== id); }
+    for (const id of [...dirty.delShifts]) { await fb.deleteDoc(fb.doc(fbDb, "getShifts", id)); dirty.delShifts = dirty.delShifts.filter(x => x !== id); }
+    for (const id of [...dirty.shifts]) {
+      const sh = shifts.find(x => x.id === id);
+      if (sh) await fb.setDoc(fb.doc(fbDb, "getShifts", id), { ...JSON.parse(JSON.stringify(sh)), ownerUid: opNow.uid, ownerName: opNow.name, syncedAt: Date.now() });
+      dirty.shifts = dirty.shifts.filter(x => x !== id); await saveDirty();
+    }
+    for (const id of [...dirty.photos]) {
+      const p = await store.photo(id), sh = shiftOf(id);
+      if (p && sh) await fb.setDoc(fb.doc(fbDb, "getPhotos", id), { shiftId: sh.id, date: sh.date, ownerUid: opNow.uid, data: await smallPhoto(p.blob), syncedAt: Date.now() });
+      dirty.photos = dirty.photos.filter(x => x !== id); await saveDirty();
+    }
+    syncNote = "";
+  } catch (x) { console.warn(x); syncNote = "Some changes couldn't be sent yet. They will be sent later."; }
+  syncing = false; await saveDirty();
+  if (!current && view === "log") render();
+}
+addEventListener("online", () => scheduleSync());
+setInterval(() => { if (waiting()) syncNow(); }, 120000);
+function syncLine() {
+  const n = waiting();
+  return `<p class="muted" style="margin:0 0 10px">${n ? `${n} change${n === 1 ? "" : "s"} on this device waiting to be sent online${navigator.onLine ? "…" : " (no signal)"}.` : "Everything on this device has been sent online."} ${esc(syncNote)}</p>`;
+}
+async function combinedData(db) {
+  const s = await fb.getDocs(fb.query(fb.collection(db, "getShifts"), fb.where("date", ">=", range.from), fb.where("date", "<=", range.to)));
+  const list = sorted(s.docs.map(d => d.data()));
+  const ps = await fb.getDocs(fb.query(fb.collection(db, "getPhotos"), fb.where("date", ">=", range.from), fb.where("date", "<=", range.to)));
+  const photos = new Map(ps.docs.map(d => [d.id, d.data().data]));
+  return { list, photoBlob: async id => photos.has(id) ? await (await fetch(photos.get(id))).blob() : null };
+}
 
 /* ---------- GET operator sign-in: own name + 4-digit PIN, approved by an app admin ----------
    Firebase holds the operators list and the approvals (needs signal the first time on a tablet).
@@ -773,27 +838,33 @@ function lockView(mode, msg = "") {
       <p class="muted" style="margin:0">Choose your name and type your PIN.</p>
       <div class="list" style="display:flex;flex-direction:column;gap:8px">${list.length ? list.map(o => `<button type="button" data-op="${esc(o.id)}" style="text-align:left">${esc(o.name)}${o.approved ? "" : ' <span class="muted">· waiting for approval</span>'}</button>`).join("")
         : `<div class="muted">${navigator.onLine ? "No GET operators yet." : "No signal. The first sign-in on this tablet needs signal."}</div>`}</div>
-      ${err}<button type="button" class="primary" id="lNew">New GET operator? Register</button>`;
+      ${err}<button type="button" class="primary" id="lNew">New GET operator? Register</button>
+      <button type="button" class="ghost" id="lAdmin">Admin: export all operators to Excel</button>`;
   } else if (mode === "pin") {
     el.innerHTML = `<h2>Hello ${esc(picked.name)}</h2><p class="muted" style="margin:0">Type your 4-digit PIN.</p>${pinIn("lPin", "PIN")}${err}
       <button class="primary">Sign in</button>
       <div class="row" style="justify-content:space-between"><button type="button" class="ghost" id="lSwitch">Not you?</button><button type="button" class="ghost" id="lForgot">Forgot your PIN?</button></div>`;
   } else if (mode === "register") {
-    el.innerHTML = `<h2>Register as a GET operator</h2><p class="muted" style="margin:0">Type your full name and make a 4-digit PIN. Muneer or Amogelang then approve you. This needs signal.</p>
+    el.innerHTML = `<h2>Register as a GET operator</h2><p class="muted" style="margin:0">Type your full name and make a 4-digit PIN. Then ask admin to approve you. This needs signal.</p>
       <label>Full name <input id="lName" maxlength="60" autocomplete="off"></label>${pinIn("lPin", "PIN")}${pinIn("lPin2", "Type the PIN again")}${err}
       <button class="primary">Register</button><button type="button" class="ghost" id="lSwitch">Back</button>`;
   } else if (mode === "wait") {
-    el.innerHTML = `<h2>Waiting for approval</h2><p style="margin:0">${esc(picked?.name || "")}, you are registered. Ask Muneer or Amogelang to approve you in the app (Daily Task Board, then Manage). Then tap Check again.</p>${err}
+    el.innerHTML = `<h2>Waiting for approval</h2><p style="margin:0">${esc(picked?.name || "")}, you are registered. Ask admin to approve you. Then tap Check again.</p>${err}
       <button type="button" class="primary" id="lCheck">Check again</button><button type="button" class="ghost" id="lSwitch">Back</button>`;
+  } else if (mode === "admin") {
+    el.innerHTML = `<h2>Combined report</h2><p class="muted" style="margin:0">Admin: sign in, choose the dates and download one Excel report for all GET operators. Needs signal.</p>
+      <label>Admin email <input id="laEmail" type="email" autocomplete="username"></label><label>Password <input id="laPass" type="password" autocomplete="current-password"></label>
+      <div class="row"><label style="flex:1">From <input type="date" id="laFrom" value="${range.from}"></label><label style="flex:1">To <input type="date" id="laTo" value="${range.to}"></label></div>
+      ${err}<button class="primary" id="laGo">Download combined report</button><button type="button" class="ghost" id="lSwitch">Back</button>`;
   } else if (mode === "forgot") {
-    el.innerHTML = `<h2>Forgot your PIN</h2><p style="margin:0">Ask Muneer or Amogelang to tap <b>Reset PIN</b> next to your name (Daily Task Board, then Manage). Then register again with your name and a new PIN, and they approve you. The GET records on the tablet stay.</p>
+    el.innerHTML = `<h2>Forgot your PIN</h2><p style="margin:0">Ask admin to reset your PIN. Then register again with your name and a new PIN, and admin approves you. Your GET records stay.</p>
       <button type="button" class="primary" id="lSwitch">OK</button>`;
   }
   setTimeout(() => el.querySelector("input")?.focus(), 50);
 }
 function unlock(op) {
   opNow = { uid: op.uid || op.id, name: op.name }; unlocked = true; lastUse = Date.now();
-  $("#lock").hidden = true; app.hidden = false; $("#opName").textContent = opNow.name; $("#lockBtn").hidden = false; render();
+  $("#lock").hidden = true; app.hidden = false; $("#opName").textContent = opNow.name; $("#lockBtn").hidden = false; render(); scheduleSync();
 }
 async function checkStillApproved() {
   // Online: a removed or unapproved operator is locked out the next time the tablet has signal.
@@ -810,12 +881,35 @@ $("#lockForm").addEventListener("click", async e => {
   const t = e.target.closest("button"); if (!t || t.type === "submit") return;
   if (t.dataset.op) { picked = ops.find(o => o.id === t.dataset.op) || (() => { const l = localOps.find(o => o.uid === t.dataset.op); return l && { id: l.uid, name: l.name, authEmail: l.authEmail, key: l.key, approved: l.approved }; })(); lockView("pin"); }
   if (t.id === "lNew") lockView("register");
+  if (t.id === "lAdmin") lockView("admin");
   if (t.id === "lSwitch") { await loadOps(); lockView("pick"); }
   if (t.id === "lForgot") lockView("forgot");
   if (t.id === "lCheck") { await loadOps(); const o = ops.find(x => x.id === picked?.id); if (o?.approved) { lockView("pin", "You are approved. Type your PIN."); picked = o; } else $("#lErr").textContent = navigator.onLine ? "Not approved yet." : "No signal."; }
 });
 $("#lockForm").addEventListener("submit", async e => {
   e.preventDefault(); const err = () => $("#lErr");
+  if (lockMode === "admin") {
+    if (!navigator.onLine) { err().textContent = "No signal. The combined report needs signal."; return; }
+    range.from = $("#laFrom").value || range.from; range.to = $("#laTo").value || range.to;
+    if (range.from > range.to) { err().textContent = "Choose a From date before the To date."; return; }
+    err().textContent = "Signing in…";
+    let tmp;
+    try {
+      await firebase(); tmp = fb.initializeApp(FIREBASE_CONFIG, "get-admin-" + Date.now()); const a = fb.getAuth(tmp);
+      const cred = await fb.signInWithEmailAndPassword(a, $("#laEmail").value.trim(), $("#laPass").value);
+      const em = (cred.user.email || "").toLowerCase();
+      if (!["muneer@tkroperations.com", "amogelang@tkroperations.com"].includes(em)) { err().textContent = "Only an admin can do this."; return; }
+      err().textContent = "Making the combined report…";
+      await loadLib("../lib/exceljs.min.js");
+      const { list, photoBlob } = await combinedData(fb.initializeFirestore(tmp, {}));
+      if (!list.length) { err().textContent = "There are no GET shifts online for these dates yet."; return; }
+      const out = await buildBrandedGET(list, em + " · all GET operators", photoBlob);
+      await shareOrDownload(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `TKR_GET_Bakkie_Log_All_Operators_${fmtDate(range.from).replace(/\//g, "-")}_to_${fmtDate(range.to).replace(/\//g, "-")}.xlsx`);
+      err().textContent = `Done: ${list.length} shift${list.length === 1 ? "" : "s"} from all GET operators.`;
+    } catch (x) { console.warn(x); err().textContent = String(x?.code || "").includes("auth") ? "Email or password is wrong." : "The report couldn't be made. Check the signal and try again."; }
+    finally { $("#laPass") && ($("#laPass").value = ""); if (tmp) { fb.getAuth(tmp).signOut?.(); fb.deleteApp(tmp).catch(() => {}); } }
+    return;
+  }
   const pin = $("#lPin")?.value.trim() || "";
   if (!/^\d{4}$/.test(pin)) { err().textContent = "The PIN must be 4 numbers."; return; }
   if (lockMode === "register") {
@@ -871,7 +965,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) chec
   try {
     await store.open(); shifts = await store.all();
     if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
-    localOps = (await store.getMeta("ops"))?.list || [];
+    localOps = (await store.getMeta("ops"))?.list || []; await loadDirty();
     lockView("pick", navigator.onLine ? "" : "No signal. Choose your name to unlock.");
     if (await loadOps()) lockView("pick");
   } catch { app.innerHTML = `<div class="card notice">This browser cannot save records. Open the app in Chrome.</div>`; }
