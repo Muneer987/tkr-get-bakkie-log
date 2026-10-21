@@ -302,23 +302,12 @@ $("exGo").onclick = async () => {
   const from = $("exFrom").value, to = $("exTo").value;
   if (!from || !to || from > to) { $("exMsg").textContent = "Choose a From date before the To date."; return; }
   $("exMsg").textContent = "Making the Excel file…";
-  try { await loadLib("../lib/xlsx.full.min.js"); } catch { $("exMsg").textContent = "The export needs signal the first time."; return; }
+  try { await loadLib("../lib/exceljs.min.js"); } catch { $("exMsg").textContent = "The export needs signal the first time."; return; }
   try {
     const s = await getDocs(query(collection(db, "tasks"), where("date", ">=", from), where("date", "<=", to)));
     const list = s.docs.map(d => d.data()).sort((a, b) => a.date.localeCompare(b.date) || (a.createdAt || 0) - (b.createdAt || 0));
     const names = Object.fromEntries(team.map(p => [p.id, p.name]));
-    const XL = window.XLSX, wb = XL.utils.book_new();
-    const people = [...new Set(list.map(t => t.person))];
-    const sum = [["TKR Operations – Daily Task Board"], [`From ${fmt(from)} to ${fmt(to)}`], [], ["Employee", "Tasks", "Done", "In progress", "Blocked", "Not started", "% done"]];
-    people.forEach(id => { const c = counts(list.filter(t => t.person === id)); sum.push([names[id] || "Former employee", c.total, c.done, c.prog, c.block, c.idle, c.total ? Math.round(c.done / c.total * 100) : 0]); });
-    const all = counts(list); sum.push(["Team total", all.total, all.done, all.prog, all.block, all.idle, all.total ? Math.round(all.done / all.total * 100) : 0]);
-    const ws1 = XL.utils.aoa_to_sheet(sum); ws1["!cols"] = [{ wch: 26 }, ...Array(6).fill({ wch: 13 })];
-    XL.utils.book_append_sheet(wb, ws1, "Sum up");
-    const rows = [["Date", "Employee", "Task", "Status", "Links to the work"]];
-    list.forEach(t => rows.push([fmt(t.date), names[t.person] || "Former employee", t.title, t.status, (t.links || []).map(l => (l.label ? l.label + ": " : "") + l.url).join("\n")]));
-    const ws2 = XL.utils.aoa_to_sheet(rows); ws2["!cols"] = [{ wch: 12 }, { wch: 22 }, { wch: 50 }, { wch: 13 }, { wch: 70 }];
-    XL.utils.book_append_sheet(wb, ws2, "Tasks");
-    const out = XL.write(wb, { bookType: "xlsx", type: "array" });
+    const out = await brandedWorkbook(list, from, to, names);
     const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     const name = `TKR_Daily_Tasks_${fmt(from).replace(/\//g, "-")}_to_${fmt(to).replace(/\//g, "-")}.xlsx`;
     const file = new File([blob], name, { type: blob.type });
@@ -328,6 +317,83 @@ $("exGo").onclick = async () => {
     $("exMsg").textContent = `${list.length} task${list.length === 1 ? "" : "s"} exported.`;
   } catch (err) { console.warn(err); $("exMsg").textContent = err?.code === "permission-denied" ? "Only managers can export." : "The export needs signal. Try again with signal."; }
 };
+
+
+/* ---------- branded Excel (TKR black and gold, logo) ---------- */
+const BLACK = "FF111111", HEAD = "FF262626", GOLD = "FFD4A12A", CREAM = "FFFFF8E6", WHITE = "FFFFFFFF", GRID = "FFD9D3C5";
+const STATUS_FILL = { "Done": "FFDDF1E3", "In progress": "FFDCE8F7", "Blocked": "FFF8DDD8", "Not started": "FFEFEDE7" };
+const STATUS_FONT = { "Done": "FF1E6B3A", "In progress": "FF1F4F8A", "Blocked": "FF9B2C1E", "Not started": "FF5E584C" };
+async function brandedWorkbook(list, from, to, names) {
+  const ExcelJS = window.ExcelJS, wb = new ExcelJS.Workbook();
+  wb.creator = "TKR Operations"; wb.created = new Date();
+  let logo = null;
+  try { const buf = await (await fetch("../icons/icon-512.png")).arrayBuffer(); logo = wb.addImage({ buffer: buf, extension: "png" }); } catch {}
+  const period = `${fmt(from)} to ${fmt(to)}`;
+  const thin = { style: "thin", color: { argb: GRID } };
+  const box = { top: thin, left: thin, bottom: thin, right: thin };
+  function band(ws, cols, title) {
+    ws.views = [{ showGridLines: false }];
+    for (let r = 1; r <= 4; r++) { ws.getRow(r).height = r === 1 ? 8 : 22; for (let c = 1; c <= cols; c++) ws.getCell(r, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: BLACK } }; }
+    for (let c = 1; c <= cols; c++) ws.getCell(5, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: GOLD } };
+    ws.getRow(5).height = 4;
+    if (logo !== null) ws.addImage(logo, { tl: { col: 0.15, row: 1.05 }, ext: { width: 62, height: 62 } });
+    const t = ws.getCell("B2"); t.value = title; t.font = { name: "Arial", size: 18, bold: true, color: { argb: WHITE } };
+    const sub = ws.getCell("B3"); sub.value = "TKR OPERATIONS  ·  THARISA MINE"; sub.font = { name: "Arial", size: 9, bold: true, color: { argb: GOLD } };
+    const per = ws.getCell("B4"); per.value = `Period: ${period}`; per.font = { name: "Arial", size: 10, color: { argb: "FFE8E2D4" } };
+  }
+  function header(ws, rowNo, labels) {
+    const row = ws.getRow(rowNo); row.height = 24;
+    labels.forEach((l, i) => { const c = row.getCell(i + 1); c.value = l; c.font = { name: "Arial", size: 10, bold: true, color: { argb: WHITE } };
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEAD } }; c.alignment = { vertical: "middle", horizontal: i === 0 ? "left" : "center", wrapText: true }; c.border = box; });
+  }
+  // Sum up
+  const ws1 = wb.addWorksheet("Sum up", { pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 } });
+  ws1.columns = [{ width: 30 }, { width: 12 }, { width: 12 }, { width: 14 }, { width: 12 }, { width: 14 }, { width: 12 }];
+  band(ws1, 7, "Daily Task Board – Sum up");
+  header(ws1, 7, ["Employee", "Tasks", "Done", "In progress", "Blocked", "Not started", "% done"]);
+  const ids = [...new Set([...team.map(p => p.id), ...list.map(t => t.person)])].filter(id => list.some(t => t.person === id));
+  let r = 8;
+  ids.forEach((id, i) => {
+    const c = counts(list.filter(t => t.person === id));
+    const row = ws1.getRow(r++); row.values = [names[id] || "Former employee", c.total, c.done, c.prog, c.block, c.idle, c.total ? c.done / c.total : 0];
+    row.eachCell({ includeEmpty: true }, (cell, n) => { if (n > 7) return; cell.border = box; cell.font = { name: "Arial", size: 10 };
+      if (i % 2) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: CREAM } }; cell.alignment = { vertical: "middle", horizontal: n === 1 ? "left" : "center" }; });
+    row.getCell(7).numFmt = "0%"; row.height = 20;
+  });
+  const all = counts(list);
+  const tot = ws1.getRow(r); tot.values = ["Team total", all.total, all.done, all.prog, all.block, all.idle, all.total ? all.done / all.total : 0];
+  tot.eachCell({ includeEmpty: true }, (cell, n) => { if (n > 7) return; cell.font = { name: "Arial", size: 11, bold: true }; cell.border = { ...box, top: { style: "medium", color: { argb: GOLD } } };
+    cell.alignment = { vertical: "middle", horizontal: n === 1 ? "left" : "center" }; });
+  tot.getCell(7).numFmt = "0%"; tot.height = 22;
+  if (ids.length) ws1.addConditionalFormatting({ ref: `G8:G${r - 1}`, rules: [{ type: "dataBar", minLength: 0, maxLength: 100, cfvo: [{ type: "num", value: 0 }, { type: "num", value: 1 }], color: { argb: "FF5FB37C" } }] });
+  const note = ws1.getCell(`A${r + 2}`); note.value = `Exported ${new Date().toLocaleString("en-ZA")}${email ? " by " + email : ""}`; note.font = { name: "Arial", size: 9, italic: true, color: { argb: "FF6B6558" } };
+  // Tasks
+  const ws2 = wb.addWorksheet("Tasks", { pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 } });
+  ws2.columns = [{ width: 13 }, { width: 24 }, { width: 52 }, { width: 14 }, { width: 46 }];
+  band(ws2, 5, "Daily Task Board – Tasks");
+  header(ws2, 7, ["Date", "Employee", "Task", "Status", "Link to the work"]);
+  r = 8;
+  list.forEach((t, i) => {
+    const links = t.links || [];
+    const row = ws2.getRow(r);
+    row.values = [fmt(t.date), names[t.person] || "Former employee", t.title, t.status || "Not started", ""];
+    row.eachCell({ includeEmpty: true }, (cell, n) => { if (n > 5) return; cell.border = box; cell.font = { name: "Arial", size: 10 };
+      cell.alignment = { vertical: "top", wrapText: true, horizontal: n === 1 || n === 4 ? "center" : "left" };
+      if (i % 2 && n !== 4) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: CREAM } }; });
+    const st = row.getCell(4), sv = t.status || "Not started";
+    st.fill = { type: "pattern", pattern: "solid", fgColor: { argb: STATUS_FILL[sv] || CREAM } }; st.font = { name: "Arial", size: 10, bold: true, color: { argb: STATUS_FONT[sv] || "FF000000" } };
+    const lc = row.getCell(5);
+    if (links.length === 1) { lc.value = { text: linkLabel(links[0]), hyperlink: links[0].url }; lc.font = { name: "Arial", size: 10, color: { argb: "FF1F4F8A" }, underline: true }; }
+    else if (links.length > 1) { lc.value = links.map(l => `${linkLabel(l)}: ${l.url}`).join("\n"); }
+    row.height = Math.max(20, 15 * Math.max(1, links.length, Math.ceil(String(t.title).length / 55)));
+    r++;
+  });
+  if (!list.length) { const c = ws2.getCell("A8"); c.value = "No tasks in this period."; c.font = { name: "Arial", italic: true, color: { argb: "FF6B6558" } }; }
+  ws2.views = [{ state: "frozen", ySplit: 7, showGridLines: false }];
+  if (list.length) ws2.autoFilter = { from: "A7", to: `E${r - 1}` };
+  ws1.views = [{ state: "frozen", ySplit: 7, showGridLines: false }];
+  return await wb.xlsx.writeBuffer();
+}
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("../sw.js", { scope: "../", updateViaCache: "none" }).then(r => r.update()).catch(() => {});
 render();
