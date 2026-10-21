@@ -1,3 +1,4 @@
+[hidden]{display:none!important}
 /* TKR black and gold. Tablet first, big touch targets (44px). */
 :root{
   --bg:#f4f1ea; --panel:#ffffff; --panel2:#f7f4ec; --line:#d9d3c5; --fg:#1a1a1a; --muted:#6b6558;

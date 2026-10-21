@@ -35,7 +35,7 @@
       <div class="muted" id="who"></div>
     </div>
     <div class="actions">
-      <label class="me">I am <select id="me"><option value="">Choose your name</option></select></label>
+      <label class="me" id="meWrap">I am <select id="me"><option value="">Choose your name</option></select></label>
       <select id="filter" aria-label="Show employee"><option value="">Everyone</option></select>
       <button id="copy">Copy summary</button>
       <button id="exportBtn" hidden>Export to Excel</button>
@@ -105,6 +105,16 @@
     <label>Password <input id="sPass" type="password" autocomplete="current-password" required></label>
     <p class="flag" id="sErr"></p>
     <div class="row" style="justify-content:flex-end"><button type="button" id="sCancel" class="ghost">Cancel</button><button class="primary">Sign in</button></div>
+  </form>
+</div>
+<div id="pinDlg" class="viewer" hidden>
+  <form id="pinForm" class="card dlg" autocomplete="off">
+    <h2 id="pTitle">Your PIN</h2>
+    <p class="muted" id="pHelp" style="margin:0"></p>
+    <label>PIN <input id="pPin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off"></label>
+    <label id="pConfirmWrap">Type it again <input id="pPin2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off"></label>
+    <p class="flag" id="pErr"></p>
+    <div class="row" style="justify-content:flex-end"><button type="button" id="pCancel" class="ghost">Cancel</button><button class="primary">OK</button></div>
   </form>
 </div>
 <div class="toast" id="toast" hidden></div>

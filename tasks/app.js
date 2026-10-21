@@ -48,21 +48,25 @@ function linkLabel(l) { if (l.label) return l.label; try { const u = new URL(l.u
 
 /* ---------- state ---------- */
 let user = null, email = "", managers = [], team = [], tasks = [], selected = ymd(new Date());
-let me = lsGet("tkr-me") || "", managing = false, linkFor = null, unsubTasks = null, teamLoaded = false, pendingWrites = false;
+let me = "", managing = false, linkFor = null, unsubTasks = null, teamLoaded = false, pendingWrites = false;
 const isAdmin = () => ADMINS.includes(email);
 const isManager = () => isAdmin() || (email && managers.includes(email));
-const canEdit = personId => isAdmin() || (personId && personId === me);
+const myEmp = () => (user && !user.isAnonymous && team.find(p => p.uid && p.uid === user.uid)) || null;
+const canEdit = personId => isAdmin() || (!!personId && myEmp()?.id === personId);
+// Employees sign in with their name and a 4-digit PIN. Behind it is a Firebase sign-in with a hidden staff address.
+const staffEmail = p => `emp.${p.id}.${p.resets || 0}@staff.tkroperations.app`.toLowerCase();
+const pinPass = (pin, p) => `tkr-${pin}-${p.id}`;
+const isStaffEmail = e => e.endsWith("@staff.tkroperations.app");
 
 /* ---------- auth ---------- */
 onAuthStateChanged(auth, async u => {
   if (!u) { try { await signInAnonymously(auth); } catch (e) { netNote("Can't connect yet. Open the board with signal the first time."); } return; }
   user = u; email = (u.email || "").toLowerCase();
   $("signBtn").textContent = u.isAnonymous ? "Manager sign in" : "Sign out";
-  $("who").textContent = u.isAnonymous ? "" : `Signed in as ${email}${isAdmin() ? " · app admin" : ""}`;
   start();
 });
 $("signBtn").onclick = async () => {
-  if (user && !user.isAnonymous) { await signOut(auth); managing = false; $("manageBox").hidden = true; $("exportBox").hidden = true; return; }
+  if (user && !user.isAnonymous) { await signOut(auth); me = ""; managing = false; $("manageBox").hidden = true; $("exportBox").hidden = true; tasks = []; return; }
   $("sErr").textContent = ""; $("signDlg").hidden = false; $("sEmail").focus();
 };
 $("sCancel").onclick = () => $("signDlg").hidden = true;
@@ -84,11 +88,19 @@ function start() {
     team = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.order || 0) - (b.order || 0));
     teamLoaded = true; renderAll();
   }, e => netNote("The board couldn't load. Check the signal and open it again."));
-  subscribeTasks(); started = true;
+  subKey = ""; subscribeTasks(true); started = true;
 }
-function subscribeTasks() {
-  if (unsubTasks) unsubTasks();
-  const q = query(collection(db, "tasks"), where("date", ">=", addDays(selected, -6)), where("date", "<=", selected));
+let subKey = "";
+function subscribeTasks(force) {
+  const mine = myEmp();
+  const key = isManager() ? "all:" + selected : mine ? "me:" + mine.id : "none";
+  if (!force && key === subKey && unsubTasks) return;
+  subKey = key;
+  if (unsubTasks) { unsubTasks(); unsubTasks = null; }
+  if (key === "none") { tasks = []; render(); return; }
+  // Managers load the week on screen; an employee loads only their own tasks (Firebase blocks the rest).
+  const q = isManager() ? query(collection(db, "tasks"), where("date", ">=", addDays(selected, -6)), where("date", "<=", selected))
+    : query(collection(db, "tasks"), where("person", "==", mine.id));
   unsubTasks = onSnapshot(q, { includeMetadataChanges: true }, s => {
     tasks = s.docs.map(d => ({ id: d.id, ...d.data() }));
     pendingWrites = s.metadata.hasPendingWrites; updateNet(); render();
@@ -107,11 +119,15 @@ const dayTasks = (date, person) => tasks.filter(t => t.date === date && (!person
 function counts(list) { const c = { total: list.length, done: 0, prog: 0, block: 0, idle: 0 }; list.forEach(t => { if (t.status === "Done") c.done++; else if (t.status === "In progress") c.prog++; else if (t.status === "Blocked") c.block++; else c.idle++; }); return c; }
 function segs(c) { if (!c.total) return ""; return [["done", "var(--ok)"], ["prog", "#2f6fb8"], ["block", "var(--bad)"], ["idle", "var(--line)"]].map(([k, v]) => c[k] ? `<span style="width:${c[k] / c.total * 100}%;background:${v}"></span>` : "").join(""); }
 
-function renderAll() { renderSelects(); renderControls(); renderManage(); render(); }
+function renderAll() { me = myEmp()?.id || ""; subscribeTasks(); renderSelects(); renderControls(); renderManage(); render(); }
 function renderSelects() {
-  const meSel = $("me"), f = $("filter"), cur = f.value;
-  meSel.innerHTML = `<option value="">Choose your name</option>` + team.map(p => `<option value="${esc(p.id)}" ${p.id === me ? "selected" : ""}>${esc(p.name)}</option>`).join("");
-  if (me && !team.some(p => p.id === me) && teamLoaded) { me = ""; lsSet("tkr-me", null); }
+  const meSel = $("me"), f = $("filter"), cur = f.value, mine = myEmp();
+  meSel.innerHTML = `<option value="">Choose your name</option>` + team.map(p => `<option value="${esc(p.id)}" ${mine && p.id === mine.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+  meSel.disabled = !!(user && !user.isAnonymous);
+  $("meWrap").hidden = !!(user && !user.isAnonymous && !mine);
+  $("filter").hidden = !isManager();
+  $("signBtn").textContent = !user || user.isAnonymous ? "Manager sign in" : "Sign out";
+  $("who").textContent = !user || user.isAnonymous ? "" : mine ? `Signed in as ${mine.name}` : `Signed in as ${email}${isAdmin() ? " · app admin" : " · manager"}`;
   f.innerHTML = `<option value="">Everyone</option>` + team.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
   f.value = team.some(p => p.id === cur) ? cur : "";
 }
@@ -159,8 +175,9 @@ function renderTeam(filter) {
   const box = $("team");
   if (!teamLoaded) return;
   if (!team.length) { box.innerHTML = `<div class="card empty"><b>No employees yet</b>${isAdmin() ? "Tap Manage to add the people on the board." : "An app admin adds the employees. Muneer or Amogelang sign in with Manager sign in, then tap Manage."}</div>`; return; }
-  const people = team.filter(p => !filter || p.id === filter);
-  people.sort((a, b) => (b.id === me) - (a.id === me));
+  const mine = myEmp();
+  if (!isManager() && !mine) { box.innerHTML = `<div class="card empty"><b>Choose your name to start</b>Tap "I am", choose your name and type your PIN. The first time, you make your own 4-digit PIN.</div>`; return; }
+  const people = isManager() ? team.filter(p => !filter || p.id === filter) : [mine];
   box.innerHTML = people.map(p => {
     const list = dayTasks(selected, p.id).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)), c = counts(list), ed = canEdit(p.id);
     const prevOpen = dayTasks(addDays(selected, -1), p.id).filter(t => t.status !== "Done");
@@ -169,6 +186,7 @@ function renderTeam(filter) {
         <input class="title" data-act="title" value="${esc(t.title)}" maxlength="200" aria-label="Task" ${ed ? "" : "disabled"}>
         ${ed ? `<button class="ib" data-act="addlink" title="Add a link to the work" aria-label="Add a link to the work">🔗</button><button class="ib" data-act="del" title="Delete task" aria-label="Delete task">×</button>` : "<span></span><span></span>"}
         ${linkFor === t.id ? `<form class="linkform" data-task="${esc(t.id)}"><input name="u" type="url" inputmode="url" placeholder="Paste the Google Drive link" aria-label="Link"><input name="l" class="lbl" placeholder="Name (optional)" maxlength="80"><button class="primary">Save link</button><button type="button" class="ghost" data-act="cancellink">Cancel</button></form>` : ""}
+        ${t.byName && t.byName !== p.name ? `<div class="links muted" style="font-size:12px">${t.editedBy && t.editedBy !== t.byName ? "edited by " + esc(t.editedBy) : "added by " + esc(t.byName)}</div>` : t.editedBy && t.editedBy !== p.name ? `<div class="links muted" style="font-size:12px">edited by ${esc(t.editedBy)}</div>` : ""}
         ${(t.links || []).length ? `<div class="links">${t.links.map(l => `<span class="lnk" data-link="${esc(l.id)}"><a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(linkLabel(l))}</a>${ed ? `<button data-act="unlink" aria-label="Remove link">×</button>` : ""}</span>`).join("")}</div>` : ""}
       </li>`).join("");
     return `<article class="card" data-person="${esc(p.id)}">
@@ -178,13 +196,13 @@ function renderTeam(filter) {
       ${list.length ? `<ul class="tasks">${rows}</ul>` : `<div class="none">No tasks for this day.</div>`}
       ${ed ? `<form class="addtask" data-person="${esc(p.id)}"><input name="t" placeholder="Add a task" maxlength="200" aria-label="New task for ${esc(p.name)}"><button class="primary">Add</button></form>
         ${prevOpen.length ? `<div class="cardfoot"><button data-act="carry">Carry over ${prevOpen.length} open from ${parse(addDays(selected, -1)).toLocaleDateString("en-ZA", { weekday: "short" })}</button></div>` : ""}`
-        : (!me && !user?.email ? `<div class="none">Choose your name at the top ("I am") to add your own tasks.</div>` : "")}
+        : ""}
     </article>`;
   }).join("");
 }
 function renderManage() {
   if (!isAdmin()) return;
-  $("teamList").innerHTML = team.length ? team.map(p => `<div class="it"><span>${esc(p.name)}</span><button class="danger" data-rm="${esc(p.id)}">Remove</button></div>`).join("") : `<div class="muted">No employees yet.</div>`;
+  $("teamList").innerHTML = team.length ? team.map(p => `<div class="it"><span>${esc(p.name)} <span class="muted">· ${p.uid ? "PIN set" : "no PIN yet"}</span></span><span class="row" style="gap:6px">${p.uid ? `<button data-resetpin="${esc(p.id)}">Reset PIN</button>` : ""}<button class="danger" data-rm="${esc(p.id)}">Remove</button></span></div>`).join("") : `<div class="muted">No employees yet.</div>`;
   $("mgrList").innerHTML = (managers.length ? managers : []).map(m => `<div class="it"><span>${esc(m)}</span><button class="danger" data-rmmgr="${esc(m)}">Remove</button></div>`).join("") || `<div class="muted">No managers added yet.</div>`;
 }
 
@@ -195,7 +213,42 @@ $("next").onclick = () => setDate(addDays(selected, 1));
 $("today").onclick = () => setDate(ymd(new Date()));
 $("date").onchange = e => setDate(e.target.value);
 $("filter").onchange = render;
-$("me").onchange = e => { me = e.target.value; lsSet("tkr-me", me || null); render(); };
+let pinFor = null;
+$("me").onchange = e => {
+  const p = team.find(x => x.id === e.target.value); if (!p) return;
+  pinFor = p; const first = !p.uid;
+  $("pTitle").textContent = first ? `Make your PIN, ${p.name}` : `Hello ${p.name}`;
+  $("pHelp").textContent = first ? "Choose 4 numbers you will remember. You type them each time you sign in on a new phone." : "Type your 4-digit PIN.";
+  $("pConfirmWrap").hidden = !first; $("pPin").value = ""; $("pPin2").value = ""; $("pErr").textContent = "";
+  $("pinDlg").hidden = false; $("pPin").focus();
+};
+$("pCancel").onclick = () => { $("pinDlg").hidden = true; renderSelects(); };
+$("pinForm").onsubmit = async e => {
+  e.preventDefault();
+  const p = pinFor, pin = $("pPin").value.trim(); if (!p) return;
+  if (!/^\d{4}$/.test(pin)) { $("pErr").textContent = "The PIN must be 4 numbers."; return; }
+  const first = !p.uid;
+  if (first && pin !== $("pPin2").value.trim()) { $("pErr").textContent = "The two PINs are not the same."; return; }
+  $("pErr").textContent = first ? "Making your PIN…" : "Signing in…";
+  const em = first ? staffEmail(p) : (p.authEmail || staffEmail(p)), pw = pinPass(pin, p);
+  try {
+    if (first) {
+      try { await createUserWithEmailAndPassword(auth, em, pw); }
+      catch (err) { if (err?.code === "auth/email-already-in-use") await signInWithEmailAndPassword(auth, em, pw); else throw err; }
+      await updateDoc(doc(db, "team", p.id), { uid: auth.currentUser.uid, authEmail: em, pinSetAt: Date.now() });
+      toast("Your PIN is made");
+    } else {
+      await signInWithEmailAndPassword(auth, em, pw); toast(`Signed in as ${p.name}`);
+    }
+    $("pinDlg").hidden = true;
+  } catch (err) {
+    const c = err?.code || "";
+    $("pErr").textContent = c.includes("too-many") ? "Too many tries. Wait a few minutes, or ask Muneer or Amogelang to reset your PIN."
+      : c.includes("network") ? "No signal. Signing in needs signal the first time."
+      : c === "permission-denied" ? "Someone has already made a PIN for this name. Ask Muneer or Amogelang to reset it."
+      : first ? "The PIN couldn't be made. Try again." : "Wrong PIN. If you forgot it, ask Muneer or Amogelang to reset it.";
+  }
+};
 $("copy").onclick = async () => {
   const lines = [`Daily tasks – ${longDate(selected)}`, ""];
   team.forEach(p => {
@@ -210,10 +263,12 @@ $("copy").onclick = async () => {
   try { await navigator.clipboard.writeText(txt); toast("Summary copied. Paste it into WhatsApp or email."); }
   catch { const ta = document.createElement("textarea"); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); toast("Summary copied"); } catch { toast("Copy isn't available here"); } ta.remove(); }
 };
+const byName = () => myEmp()?.name || email || "Unknown";
 async function addTask(person, title, status = "Not started") {
   const now = Date.now();
-  await addDoc(collection(db, "tasks"), { person, date: selected, title, status, links: [], createdAt: now, updatedAt: now });
+  await addDoc(collection(db, "tasks"), { person, date: selected, title, status, links: [], createdAt: now, updatedAt: now, byUid: user?.uid || "", byName: byName() });
 }
+const stamp = () => ({ updatedAt: Date.now(), editedBy: byName() });
 const team$ = $("team");
 team$.addEventListener("submit", async e => {
   e.preventDefault();
@@ -223,7 +278,7 @@ team$.addEventListener("submit", async e => {
     if (!url) { toast("Paste the full link, starting with https://"); lf.u.focus(); return; }
     const t = tasks.find(x => x.id === id); if (!t) return;
     linkFor = null;
-    updateDoc(doc(db, "tasks", id), { links: [...(t.links || []), { id: "l" + Date.now().toString(36), url, label }], updatedAt: Date.now() }).catch(fail);
+    updateDoc(doc(db, "tasks", id), { links: [...(t.links || []), { id: "l" + Date.now().toString(36), url, label }], ...stamp() }).catch(fail);
     render(); toast("Link added"); return;
   }
   const f = e.target.closest("form.addtask"); if (!f) return;
@@ -234,14 +289,14 @@ team$.addEventListener("submit", async e => {
 team$.addEventListener("change", e => {
   if (e.target.dataset.act !== "status") return;
   const id = e.target.closest(".task").dataset.id;
-  updateDoc(doc(db, "tasks", id), { status: e.target.value, updatedAt: Date.now() }).catch(fail);
+  updateDoc(doc(db, "tasks", id), { status: e.target.value, ...stamp() }).catch(fail);
 });
 team$.addEventListener("focusout", e => {
   if (e.target.dataset.act !== "title") return;
   const id = e.target.closest(".task").dataset.id, t = tasks.find(x => x.id === id), v = e.target.value.trim();
   if (!t || v === t.title) return;
   if (!v) { e.target.value = t.title; return; }
-  updateDoc(doc(db, "tasks", id), { title: v, updatedAt: Date.now() }).catch(fail);
+  updateDoc(doc(db, "tasks", id), { title: v, ...stamp() }).catch(fail);
 });
 team$.addEventListener("keydown", e => { if (e.target.dataset.act === "title" && e.key === "Enter") e.target.blur(); });
 team$.addEventListener("click", async e => {
@@ -252,7 +307,7 @@ team$.addEventListener("click", async e => {
   if (act === "cancellink") { linkFor = null; render(); return; }
   if (act === "unlink") {
     const t = tasks.find(x => x.id === id), lid = b.closest(".lnk").dataset.link;
-    if (t && confirm("Remove this link?")) updateDoc(doc(db, "tasks", id), { links: (t.links || []).filter(l => l.id !== lid), updatedAt: Date.now() }).catch(fail);
+    if (t && confirm("Remove this link?")) updateDoc(doc(db, "tasks", id), { links: (t.links || []).filter(l => l.id !== lid), ...stamp() }).catch(fail);
     return;
   }
   if (act === "carry") {
@@ -272,6 +327,12 @@ $("addPerson").onsubmit = e => {
 };
 $("manageBox").addEventListener("click", async e => {
   const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.resetpin) {
+    const p = team.find(x => x.id === b.dataset.resetpin);
+    if (p && confirm(`Reset ${p.name}'s PIN? Their tasks stay. Next time they choose their name, they make a new PIN.`))
+      updateDoc(doc(db, "team", p.id), { uid: null, authEmail: null, resets: (p.resets || 0) + 1 }).then(() => toast(`${p.name} can now make a new PIN`)).catch(fail);
+    return;
+  }
   if (b.dataset.rm) { const p = team.find(x => x.id === b.dataset.rm); if (p && confirm(`Remove ${p.name} from the board? Their past tasks are kept.`)) deleteDoc(doc(db, "team", p.id)).catch(fail); }
   if (b.dataset.rmmgr) { if (confirm(`Remove ${b.dataset.rmmgr} as a manager?`)) setDoc(doc(db, "config", "roles"), { managers: arrayRemove(b.dataset.rmmgr) }, { merge: true }).catch(fail); }
 });
