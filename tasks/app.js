@@ -24,6 +24,7 @@ try { db = initializeFirestore(fbApp, { localCache: persistentLocalCache({ tabMa
 catch { db = initializeFirestore(fbApp, {}); }
 
 /* ---------- helpers ---------- */
+const loadLib = src => new Promise((res, rej) => { if (document.querySelector(`script[src="${src}"]`)?.dataset.ok) return res(); const s = document.createElement("script"); s.src = src; s.onload = () => { s.dataset.ok = 1; res(); }; s.onerror = rej; document.head.appendChild(s); });
 const $ = id => document.getElementById(id);
 const pad = n => String(n).padStart(2, "0");
 const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -301,6 +302,7 @@ $("exGo").onclick = async () => {
   const from = $("exFrom").value, to = $("exTo").value;
   if (!from || !to || from > to) { $("exMsg").textContent = "Choose a From date before the To date."; return; }
   $("exMsg").textContent = "Making the Excel file…";
+  try { await loadLib("../lib/xlsx.full.min.js"); } catch { $("exMsg").textContent = "The export needs signal the first time."; return; }
   try {
     const s = await getDocs(query(collection(db, "tasks"), where("date", ">=", from), where("date", "<=", to)));
     const list = s.docs.map(d => d.data()).sort((a, b) => a.date.localeCompare(b.date) || (a.createdAt || 0) - (b.createdAt || 0));

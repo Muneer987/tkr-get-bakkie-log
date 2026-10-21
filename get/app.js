@@ -1,4 +1,5 @@
 "use strict";
+const loadLib = src => new Promise((res, rej) => { if (document.querySelector(`script[src="${src}"]`)?.dataset.ok) return res(); const s = document.createElement("script"); s.src = src; s.onload = () => { s.dataset.ok = 1; res(); }; s.onerror = rej; document.head.appendChild(s); });
 /* TKR GET Bakkie Log — offline app. Everything is saved on this device (IndexedDB).
    Excel export makes the sum-up; the backup file moves the records to a new device. */
 
@@ -455,6 +456,7 @@ app.addEventListener("click", async e => {
     current = newShift(); await save("Shift started"); render(); scrollTo(0, 0); return;
   }
   if (t.id === "xlsx" || t.id === "zip") {
+    try { await loadLib("../lib/xlsx.full.min.js"); if (t.id === "zip") await loadLib("../lib/jszip.min.js"); } catch { alert("The export needs the app to be opened once with signal."); return; }
     const list = inRange();
     if (!list.length) { alert("There are no shifts in these dates."); return; }
     const name = `TKR_GET_Bakkie_Log_${fmtDate(range.from).replace(/\//g, "-")}_to_${fmtDate(range.to).replace(/\//g, "-")}`;
