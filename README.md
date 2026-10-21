@@ -14,4 +14,6 @@ Offline tablet app for TKR Operations Drill Stores (Tharisa). The GET operator l
 ## Install on a tablet or phone
 
 Open the app link in Chrome, then tap **Install app** (or ⋮ → Add to Home screen).
-On an iPhone, open it in Safari and tap Share → Add to Home Screen.
+iPhone / iPad: open it in Safari, tap Share → Add to Home Screen.
+Windows PC: open it in Chrome or Edge, click the install icon in the address bar (or ⋯ → Apps → Install).
+Honor (MagicOS): open it in Chrome, tap ⋮ → Install app.
