@@ -28,11 +28,12 @@ const store = {
   db: null,
   open() {
     return new Promise((res, rej) => {
-      const r = indexedDB.open("tkr-get-bakkie-log", 2);
+      const r = indexedDB.open("tkr-get-bakkie-log", 3);
       r.onupgradeneeded = () => {
         const db = r.result;
         if (!db.objectStoreNames.contains("shifts")) db.createObjectStore("shifts", { keyPath: "id" });
         if (!db.objectStoreNames.contains("photos")) db.createObjectStore("photos", { keyPath: "id" });
+        if (!db.objectStoreNames.contains("meta")) db.createObjectStore("meta", { keyPath: "id" });
       };
       r.onsuccess = () => { this.db = r.result; res(); };
       r.onerror = () => rej(r.error);
@@ -51,6 +52,8 @@ const store = {
   del(id) { return this.tx("shifts", "readwrite", os => os.delete(id)); },
   photo(id) { return this.tx("photos", "readonly", os => os.get(id)); },
   putPhoto(p) { return this.tx("photos", "readwrite", os => os.put(p)); },
+  getMeta(id) { return this.tx("meta", "readonly", os => os.get(id)); },
+  putMeta(m) { return this.tx("meta", "readwrite", os => os.put(m)); },
   delPhoto(id) { return this.tx("photos", "readwrite", os => os.delete(id)); },
 };
 
@@ -603,10 +606,66 @@ addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = 
 $("#installBtn").addEventListener("click", async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; $("#installBtn").hidden = true; });
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("../sw.js", { scope: "../", updateViaCache: "none" }).then(r => r.update()).catch(() => {}));
 
+/* ---------- PIN lock: the GET operator's PIN, kept on this tablet only (as a hash, never the PIN itself) ---------- */
+const LOCK_AFTER_MS = 10 * 60 * 1000;
+const ADMINS = ["muneer@tkroperations.com", "amogelang@tkroperations.com"];
+const FIREBASE_CONFIG = { apiKey: "AIzaSyALzOBLObrONGVD1bS0Tz02aNKhQ40TRoI", authDomain: "tkr-operations-app.firebaseapp.com", projectId: "tkr-operations-app", appId: "1:158080247079:web:7cb7786d2b7f9ee172b502" };
+let pinRec = null, unlocked = false, lastUse = Date.now(), lockMode = "enter";
+async function hashPin(pin, salt) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(salt + ":" + pin));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+function showLock(mode, msg = "") {
+  lockMode = mode; unlocked = false; app.hidden = true; $("#lock").hidden = false;
+  const make = mode === "make";
+  $("#lTitle").textContent = mode === "admin" ? "Reset the GET PIN" : make ? "Make the GET operator's PIN" : "Enter the GET PIN";
+  $("#lHelp").textContent = mode === "admin" ? "Muneer or Amogelang: sign in with your app email and password. This needs signal." : make ? "Choose 4 numbers. Only the GET operator should know them. The app asks for this PIN each time it opens." : "Type the GET operator's 4-digit PIN.";
+  $("#lPinWrap").hidden = mode === "admin"; $("#lPin2Wrap").hidden = !make; $("#lAdminWrap").hidden = mode !== "admin";
+  $("#lForgot").hidden = mode !== "enter"; $("#lBack").hidden = mode !== "admin";
+  $("#lPin").value = ""; $("#lPin2").value = ""; $("#lErr").textContent = msg;
+  setTimeout(() => (mode === "admin" ? $("#lEmail") : $("#lPin")).focus(), 50);
+}
+function unlock() { unlocked = true; lastUse = Date.now(); $("#lock").hidden = true; app.hidden = false; render(); }
+$("#lockForm").addEventListener("submit", async e => {
+  e.preventDefault(); const err = $("#lErr");
+  if (lockMode === "admin") {
+    err.textContent = "Checking…";
+    try {
+      const fb = await import("../lib/firebase.js");
+      const tmp = fb.initializeApp(FIREBASE_CONFIG, "get-reset-" + Date.now()), a = fb.getAuth(tmp);
+      const cred = await fb.signInWithEmailAndPassword(a, $("#lEmail").value.trim(), $("#lPass").value);
+      const ok = ADMINS.includes((cred.user.email || "").toLowerCase());
+      await fb.signOut(a).catch(() => {}); fb.deleteApp(tmp).catch(() => {});
+      $("#lPass").value = "";
+      if (!ok) { err.textContent = "Only Muneer or Amogelang can reset the PIN."; return; }
+      showLock("make", "Signed in. Now make the new PIN.");
+    } catch (x) { err.textContent = String(x?.code || "").includes("network") || !navigator.onLine ? "No signal. Resetting the PIN needs signal." : "Email or password is wrong."; }
+    return;
+  }
+  const pin = $("#lPin").value.trim();
+  if (!/^\d{4}$/.test(pin)) { err.textContent = "The PIN must be 4 numbers."; return; }
+  if (lockMode === "make") {
+    if (pin !== $("#lPin2").value.trim()) { err.textContent = "The two PINs are not the same."; return; }
+    const salt = crypto.getRandomValues(new Uint32Array(2)).join("-");
+    pinRec = { id: "pin", salt, hash: await hashPin(pin, salt), setAt: Date.now() };
+    try { await store.putMeta(pinRec); } catch { err.textContent = "The PIN couldn't be saved on this device."; return; }
+    unlock(); return;
+  }
+  if ((await hashPin(pin, pinRec.salt)) === pinRec.hash) unlock(); else { $("#lPin").value = ""; err.textContent = "Wrong PIN."; }
+});
+$("#lForgot").onclick = () => showLock("admin");
+$("#lBack").onclick = () => showLock("enter");
+$("#lockBtn").onclick = async () => { if (saveTimer && current) await save(); showLock("enter"); };
+["pointerdown", "keydown", "input"].forEach(ev => document.addEventListener(ev, () => { if (unlocked) lastUse = Date.now(); }, { passive: true }));
+const checkIdle = async () => { if (unlocked && pinRec && Date.now() - lastUse > LOCK_AFTER_MS) { if (saveTimer && current) await save(); showLock("enter"); } };
+setInterval(checkIdle, 30000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkIdle(); });
+
 (async () => {
   try {
     await store.open(); shifts = await store.all();
     if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
-    render();
+    pinRec = await store.getMeta("pin");
+    showLock(pinRec ? "enter" : "make");
   } catch { app.innerHTML = `<div class="card notice">This browser cannot save records. Open the app in Chrome.</div>`; }
 })();
