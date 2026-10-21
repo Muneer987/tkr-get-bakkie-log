@@ -9,6 +9,7 @@ Offline tablet app for TKR Operations Drill Stores (Tharisa). The GET operator l
 - Optional photos on any movement, for example stock received from the store
 - Export to Excel: Sum up, Shifts, Movements, Bakkie per shift, Rigs per shift
 - Excel + photos (zip): the Excel file and a Photos folder, each photo named by date, shift, time, movement and item
+- After an export, "Clear these shifts" removes the exported closed shifts and their photos from the tablet (the latest shift and open shifts stay)
 - Works with no signal. Records are saved on the device only, so make a backup file every week (Backup tab)
 
 ## Install on a tablet or phone

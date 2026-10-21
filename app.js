@@ -110,6 +110,22 @@ function newShift() {
     signOperator: "", signSupervisor: "", signStore: "", closed: false, createdAt: Date.now() };
 }
 
+/* ---------- clear after export: keeps the latest shift (for the shift-change carry-over) and any open shift ---------- */
+let lastExport = null;
+function clearable() {
+  if (!lastExport) return [];
+  const keep = sorted(shifts)[0]?.id;
+  return shifts.filter(s => lastExport.ids.includes(s.id) && s.id !== keep && s.closed);
+}
+function clearCard() {
+  if (!lastExport) return "";
+  const list = clearable();
+  if (!list.length) return `<div class="info">Export done. There are no closed shifts to clear. The latest shift and open shifts always stay on the tablet.</div>`;
+  return `<div class="info"><b>Export done.</b> Check that the file arrived on WhatsApp or email, then you can clear these ${list.length} closed shift${list.length === 1 ? "" : "s"} (${fmtDate(lastExport.from)} to ${fmtDate(lastExport.to)}) from this tablet.
+    The latest shift and open shifts stay.${lastExport.photos || !list.some(s => (s.moves || []).some(m => (m.photos || []).length)) ? "" :" <b>You exported Excel only, so clearing also deletes the photos of these shifts.</b>"}
+    <div class="row" style="margin-top:10px"><button class="danger" id="clearExported">Clear these shifts</button><button class="ghost" id="keepExported">Keep them</button></div></div>`;
+}
+
 /* ---------- home ---------- */
 function render() {
   if (current) {
@@ -126,7 +142,7 @@ function render() {
       <button class="primary" id="newShift" style="flex:1 1 220px">Start shift / shift change</button></div>` + shiftList(inRange());
   else if (view === "log") body = `<div class="row" style="margin-bottom:14px;align-items:flex-end">${dates}
       <button class="primary" id="xlsx" style="flex:1 1 200px">Export to Excel</button>
-      <button id="zip" style="flex:1 1 200px">Excel + photos (zip)</button></div>` + logTable(inRange());
+      <button id="zip" style="flex:1 1 200px">Excel + photos (zip)</button></div>` + clearCard() + logTable(inRange());
   else body = backupView();
   app.innerHTML = `<div class="tabs" role="tablist">${tab("shifts", "Shifts")}${tab("log", "Movement log")}${tab("backup", "Backup")}</div>${body}`;
 }
@@ -406,9 +422,10 @@ app.addEventListener("click", async e => {
     if (!list.length) { alert("There are no shifts in these dates."); return; }
     const name = `TKR_GET_Bakkie_Log_${fmtDate(range.from).replace(/\//g, "-")}_to_${fmtDate(range.to).replace(/\//g, "-")}`;
     const out = XLSX.write(buildWorkbook(list), { bookType: "xlsx", type: "array" });
+    const done = r => { if (r !== "cancelled") lastExport = { ids: list.map(s => s.id), from: range.from, to: range.to, photos: t.id === "zip" }; };
     if (t.id === "xlsx") {
-      await shareOrDownload(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), name + ".xlsx");
-      return;
+      done(await shareOrDownload(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), name + ".xlsx"));
+      render(); return;
     }
     t.disabled = true; t.textContent = "Making zip…";
     try {
@@ -419,10 +436,19 @@ app.addEventListener("click", async e => {
         for (let i = 0; i < (m.photos || []).length; i++) { const p = await store.photo(m.photos[i]); if (p) { folder.file(names[i], p.blob); n++; } }
       }
       const blob = await zip.generateAsync({ type: "blob", mimeType: "application/zip" });
-      await shareOrDownload(blob, name + ".zip");
+      done(await shareOrDownload(blob, name + ".zip"));
       if (!n) alert("The zip has the Excel file only. No photos were taken in these dates.");
     } finally { render(); }
     return;
+  }
+  if (t.id === "keepExported") { lastExport = null; render(); return; }
+  if (t.id === "clearExported") {
+    const list = clearable();
+    const nPh = list.reduce((n, s) => n + (s.moves || []).reduce((k, m) => k + (m.photos || []).length, 0), 0);
+    if (!confirm(`Clear ${list.length} shift${list.length === 1 ? "" : "s"}${nPh ? ` and ${nPh} photo${nPh === 1 ? "" : "s"}` : ""} from this tablet? This cannot be undone. Only do this if the exported file arrived.`)) return;
+    for (const s of list) { await store.del(s.id); await deletePhotos((s.moves || []).flatMap(m => m.photos || [])); }
+    const gone = new Set(list.map(s => s.id)); shifts = shifts.filter(s => !gone.has(s.id));
+    lastExport = null; render(); alert(`${list.length} shift${list.length === 1 ? "" : "s"} cleared.`); return;
   }
   if (t.id === "takePhoto") { photoTarget = null; $("#camera").click(); return; }
   if (t.dataset.addphoto) { photoTarget = t.dataset.addphoto; $("#camera").click(); return; }

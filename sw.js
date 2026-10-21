@@ -1,5 +1,5 @@
 // Keeps the app working with no signal. Bump VERSION when the app files change.
-const VERSION = "v3";
+const VERSION = "v4";
 const FILES = ["./", "index.html", "style.css", "app.js", "xlsx.full.min.js", "jszip.min.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-192.png", "icons/maskable-512.png", "icons/logo-96.png"];
 
