@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>GET Forecast · TKR</title>
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="../manifest.webmanifest">
+<link rel="icon" href="../icons/icon-192.png">
+<link rel="apple-touch-icon" href="../icons/maskable-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="fc.css">
+</head>
+<body>
+<div class="band"><div class="in">
+  <a href="../" class="home" aria-label="TKR home">‹</a>
+  <img class="logo" src="../icons/logo-96.png" alt="TKR Operations">
+  <div><h1>GET Forecast</h1><div class="sub">TKR Operations · Drill Stores · Tharisa</div></div>
+  <span id="who" class="sub" style="margin-left:auto"></span>
+  <button id="signBtn" class="install" hidden>Sign out</button>
+</div></div>
+<div class="wrap">
+  <div id="net" class="netbar" hidden></div>
+  <div id="gate" class="card" hidden style="max-width:440px;margin:24px auto">
+    <form id="signForm" style="display:flex;flex-direction:column;gap:12px" autocomplete="on">
+      <h2>Admin and manager sign in</h2>
+      <p class="muted" style="margin:0">The GET Forecast is for admins and managers. Sign in with your app email and password.</p>
+      <label>Email <input id="sEmail" type="email" autocomplete="username" required></label>
+      <label>Password <input id="sPass" type="password" autocomplete="current-password" required></label>
+      <p class="flag" id="sErr" style="margin:0"></p>
+      <button class="primary">Sign in</button>
+    </form>
+  </div>
+  <div id="app" hidden></div>
+</div>
+<div class="toast" id="toast" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
