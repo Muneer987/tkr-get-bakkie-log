@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>GET Bakkie Log</title>
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="../manifest.webmanifest">
+<link rel="icon" href="../icons/icon-192.png">
+<link rel="apple-touch-icon" href="../icons/maskable-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="GET Log">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="band"><div class="in">
+  <a href="../" class="home" aria-label="TKR home">‹</a>
+  <img class="logo" src="../icons/logo-96.png" alt="TKR Operations">
+  <div><h1>GET Bakkie Log</h1><div class="sub">TKR Operations · Drill Stores · Tharisa</div></div>
+  <button id="installBtn" class="install" hidden>Install app</button>
+</div></div>
+<div class="wrap"><div id="app"><div class="card empty"><b>Loading…</b></div></div></div>
+<input type="file" id="camera" accept="image/*" capture="environment" hidden>
+<div id="viewer" class="viewer" hidden>
+  <img id="viewerImg" alt="Photo">
+  <div class="row" style="justify-content:center"><button id="viewerDel" class="danger">Delete photo</button><button id="viewerClose" class="primary">Close</button></div>
+</div>
+<script src="../lib/xlsx.full.min.js"></script>
+<script src="../lib/jszip.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

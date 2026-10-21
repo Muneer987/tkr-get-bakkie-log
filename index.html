@@ -3,31 +3,54 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>GET Bakkie Log</title>
+<title>TKR Operations</title>
 <meta name="theme-color" content="#000000">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/maskable-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="GET Log">
+<meta name="apple-mobile-web-app-title" content="TKR">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <link rel="stylesheet" href="style.css">
+<style>
+.sections{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr))}
+.section{display:flex;gap:16px;align-items:center;text-decoration:none;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-left:5px solid var(--gold);border-radius:12px;padding:20px 18px;min-height:110px}
+.section:hover,.section:focus-visible{border-color:var(--gold)}
+.section .ic{width:56px;height:56px;border-radius:12px;background:#000;color:#d4a12a;display:grid;place-items:center;flex:none}
+.section .ic svg{width:30px;height:30px}
+.section b{display:block;font-family:var(--display);font-size:24px;line-height:1.1}
+.section small{display:block;color:var(--muted);font-size:14px;margin-top:3px}
+.tag{display:inline-block;margin-top:8px;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;padding:2px 8px;border-radius:99px;border:1px solid currentColor}
+.tag.off{color:var(--ok)} .tag.on{color:var(--gold)}
+.hello{font-family:var(--display);font-size:22px;margin:4px 0 14px}
+</style>
 </head>
 <body>
 <div class="band"><div class="in">
   <img class="logo" src="icons/logo-96.png" alt="TKR Operations">
-  <div><h1>GET Bakkie Log</h1><div class="sub">TKR Operations · Drill Stores · Tharisa</div></div>
+  <div><h1>TKR Operations</h1><div class="sub">Tharisa Mine · Stores and teams</div></div>
   <button id="installBtn" class="install" hidden>Install app</button>
 </div></div>
-<div class="wrap"><div id="app"><div class="card empty"><b>Loading…</b></div></div></div>
-<input type="file" id="camera" accept="image/*" capture="environment" hidden>
-<div id="viewer" class="viewer" hidden>
-  <img id="viewerImg" alt="Photo">
-  <div class="row" style="justify-content:center"><button id="viewerDel" class="danger">Delete photo</button><button id="viewerClose" class="primary">Close</button></div>
+<div class="wrap">
+  <div class="hello">Choose a section</div>
+  <div class="sections" id="sections"></div>
 </div>
-<script src="xlsx.full.min.js"></script>
-<script src="jszip.min.js"></script>
-<script src="app.js"></script>
+<script>
+/* Sections of the TKR app. To add a new section later, add one line here and a folder with its page. */
+const SECTIONS = [
+  { href: "get/", title: "GET Bakkie Log", text: "Bits, rods and shanks from the store to the rigs, shift by shift", tag: "Works offline", off: true,
+    icon: '<path d="M3 16V7h11v9M14 10h4l3 3v3h-7"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/>' },
+  { href: "tasks/", title: "Daily Task Board", text: "Each employee's tasks and work for the day, for the managers to see", tag: "Needs signal to share", off: false,
+    icon: '<rect x="4" y="4" width="16" height="17" rx="2"/><path d="M8 2v4M16 2v4M8 11l2 2 4-4M8 17h8"/>' },
+];
+document.getElementById("sections").innerHTML = SECTIONS.map(s => `<a class="section" href="${s.href}">
+  <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${s.icon}</svg></span>
+  <span><b>${s.title}</b><small>${s.text}</small><span class="tag ${s.off ? "off" : "on"}">${s.tag}</span></span></a>`).join("");
+let installEvt = null;
+addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; installBtn.hidden = false; });
+installBtn.onclick = async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; installBtn.hidden = true; };
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(r => r.update()).catch(() => {});
+</script>
 </body>
 </html>

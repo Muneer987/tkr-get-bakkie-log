@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Daily Task Board · TKR</title>
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="../manifest.webmanifest">
+<link rel="icon" href="../icons/icon-192.png">
+<link rel="apple-touch-icon" href="../icons/maskable-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="tasks.css">
+</head>
+<body>
+<div class="band"><div class="in">
+  <a href="../" class="home" aria-label="TKR home">‹</a>
+  <img class="logo" src="../icons/logo-96.png" alt="TKR Operations">
+  <div><h1>Daily Task Board</h1><div class="sub">TKR Operations · Tharisa Mine</div></div>
+  <div class="datenav">
+    <button id="prev" aria-label="Previous day">‹</button>
+    <input type="date" id="date" aria-label="Date">
+    <button id="next" aria-label="Next day">›</button>
+    <button id="today">Today</button>
+  </div>
+</div></div>
+
+<div class="wrap">
+  <div id="net" class="netbar" hidden></div>
+  <div class="strip">
+    <div>
+      <div class="dayname" id="dayname"></div>
+      <div class="muted" id="who"></div>
+    </div>
+    <div class="actions">
+      <label class="me">I am <select id="me"><option value="">Choose your name</option></select></label>
+      <select id="filter" aria-label="Show employee"><option value="">Everyone</option></select>
+      <button id="copy">Copy summary</button>
+      <button id="exportBtn" hidden>Export to Excel</button>
+      <button id="manageBtn" hidden aria-pressed="false">Manage</button>
+      <button id="signBtn">Manager sign in</button>
+    </div>
+  </div>
+
+  <section id="exportBox" class="card" hidden>
+    <h2>Export to Excel</h2>
+    <div class="row" style="align-items:flex-end">
+      <label style="flex:1 1 150px">From <input type="date" id="exFrom"></label>
+      <label style="flex:1 1 150px">To <input type="date" id="exTo"></label>
+      <button class="primary" id="exGo" style="flex:1 1 200px">Download Excel</button>
+    </div>
+    <p class="muted" id="exMsg" style="margin:8px 0 0"></p>
+  </section>
+
+  <section id="manageBox" class="card" hidden>
+    <h2>Manage</h2>
+    <div class="cols2">
+      <div>
+        <h3>Employees on the board</h3>
+        <form id="addPerson" class="row"><input id="newPerson" placeholder="Employee name" maxlength="60" style="flex:1 1 200px"><button class="primary">Add employee</button></form>
+        <div id="teamList" class="list"></div>
+      </div>
+      <div>
+        <h3>Managers who can download</h3>
+        <p class="muted" style="margin-top:0">Muneer and Amogelang are app admins. Add a manager here with their email and a password. They sign in with "Manager sign in".</p>
+        <form id="addMgr" class="grid2">
+          <input id="mgrEmail" type="email" placeholder="Manager email" autocomplete="off">
+          <input id="mgrPass" type="text" placeholder="Password (6+ characters)" autocomplete="off">
+          <button class="primary">Add manager</button>
+        </form>
+        <div id="mgrList" class="list"></div>
+        <p class="muted" id="mgrMsg"></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="summary">
+    <div class="card">
+      <h2 id="sumhead">Day summary</h2>
+      <div class="tiles">
+        <div class="tile t-total"><span class="n" id="nTotal">0</span><span class="l">Tasks</span></div>
+        <div class="tile t-done"><span class="n" id="nDone">0</span><span class="l">Done</span></div>
+        <div class="tile t-prog"><span class="n" id="nProg">0</span><span class="l">In progress</span></div>
+        <div class="tile t-block"><span class="n" id="nBlock">0</span><span class="l">Blocked</span></div>
+      </div>
+      <div class="meter"><div class="bar" id="meter"></div><span class="pct" id="pct">No tasks yet</span></div>
+    </div>
+    <div class="card chart">
+      <h2>Last 7 days</h2>
+      <div id="chart"></div>
+      <div class="legend"><span><i style="background:var(--ok)"></i>Done</span><span><i style="background:var(--line)"></i>Not done</span></div>
+    </div>
+  </section>
+
+  <section class="team" id="team"><div class="card empty"><b>Loading the board…</b>Open this with signal the first time.</div></section>
+  <p class="muted">To add your work, save it in Google Drive, tap Share, set General access to "Anyone with the link", copy the link and add it to your task with the link button.</p>
+</div>
+
+<div id="signDlg" class="viewer" hidden>
+  <form id="signForm" class="card dlg">
+    <h2>Manager sign in</h2>
+    <label>Email <input id="sEmail" type="email" autocomplete="username" required></label>
+    <label>Password <input id="sPass" type="password" autocomplete="current-password" required></label>
+    <p class="flag" id="sErr"></p>
+    <div class="row" style="justify-content:flex-end"><button type="button" id="sCancel" class="ghost">Cancel</button><button class="primary">Sign in</button></div>
+  </form>
+</div>
+<div class="toast" id="toast" hidden></div>
+<script src="../lib/xlsx.full.min.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,21 +1,18 @@
-# TKR GET Bakkie Log
+# TKR Operations app
 
-Offline tablet app for TKR Operations Drill Stores (Tharisa). The GET operator logs every bit, rod and shank that goes on or off the bakkie, shift by shift.
+One app with sections. Home screen: choose a section.
 
-- Shifts by date, Day/Night
-- Trips to the store: each store run in a shift has its own time out, time back and stock loaded
-- Shift change: last shift's bakkie and rig counts carry over as the new start
-- Every movement: received from store, fitted on rig, old item back, handed back to store, lost in hole, with time on board, item numbers and block/hole
-- Rig counts at end of shift and sign-off
-- Optional photos on any movement, for example stock received from the store
-- Export to Excel: Sum up, Shifts, Movements, Bakkie per shift, Rigs per shift
-- Excel + photos (zip): the Excel file and a Photos folder, each photo named by date, shift, time, movement and item
-- After an export, "Clear these shifts" removes the exported closed shifts and their photos from the tablet (the latest shift and open shifts stay)
-- Works with no signal. Records are saved on the device only, so make a backup file every week (Backup tab)
+## GET Bakkie Log (get/) – works offline
+The GET operator logs every bit, rod and shank that goes on or off the bakkie, shift by shift: trips to the store, movements, rig counts, photos, sign-off, Excel and zip export, backup. Records are saved on the device only.
 
-## Install on a tablet or phone
+## Daily Task Board (tasks/) – shared online (Firebase)
+Each employee picks their name and updates their own tasks, with links to their work in Google Drive. Works with no signal and sends changes when the signal is back.
+App admins (Muneer, Amogelang) sign in with "Manager sign in" to add employees and managers. Managers sign in to download the Excel export.
 
-Open the app link in Chrome, then tap **Install app** (or ⋮ → Add to Home screen).
+## Adding a section
+Add one line to SECTIONS in index.html and a folder with the section's page, and add its files to sw.js.
+
+## Install
+Android / Honor: open the link in Chrome, tap Install app (or ⋮ → Install app).
 iPhone / iPad: open it in Safari, tap Share → Add to Home Screen.
-Windows PC: open it in Chrome or Edge, click the install icon in the address bar (or ⋯ → Apps → Install).
-Honor (MagicOS): open it in Chrome, tap ⋮ → Install app.
+Windows PC: open it in Chrome or Edge, click the install icon in the address bar.
