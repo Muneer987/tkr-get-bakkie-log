@@ -153,8 +153,7 @@ function render() {
   if (view === "shifts") body = `<div class="row" style="margin-bottom:14px;align-items:flex-end">${dates}
       <button class="primary" id="newShift" style="flex:1 1 220px">Start shift / shift change</button></div>` + shiftList(inRange());
   else if (view === "log") body = `<div class="row" style="margin-bottom:14px;align-items:flex-end">${dates}
-      <button class="primary" id="xlsx" style="flex:1 1 200px">Export to Excel</button>
-      <button id="zip" style="flex:1 1 200px">Excel + photos (zip)</button></div>` + clearCard() + logTable(inRange());
+      ${canExport() ? `<button class="primary" id="xlsx" style="flex:1 1 200px">Export to Excel (with photos)</button>` : ""}</div>` + exportGate() + clearCard() + logTable(inRange());
   else body = backupView();
   app.innerHTML = `<div class="tabs" role="tablist">${tab("shifts", "Shifts")}${tab("log", "Movement log")}${tab("backup", "Backup")}</div>${body}`;
 }
@@ -196,7 +195,8 @@ function backupView() {
       <h2>Backup</h2>
       <p style="margin-top:0">The records are saved on this device only. Make a backup at least once a week and send it on WhatsApp or email. If this device is lost or replaced, open the app on the new device and restore the backup file.</p>
       <p class="muted">${shifts.length} shift${shifts.length === 1 ? "" : "s"} on this device. ${last ? "Last backup: " + esc(last) + "." : "No backup made yet on this device."}</p>
-      <div class="row"><button class="primary" id="backup">Make backup file</button>
+      ${canExport() ? "" : `<p class="muted">Making a backup file needs an admin, or an admin's permission (Movement log, Export).</p>`}
+      <div class="row"><button class="primary" id="backup" ${canExport() ? "" : "disabled"}>Make backup file</button>
       <label class="row" style="flex-direction:row"><span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400"></span>
         <button id="restoreBtn" type="button">Restore from backup file</button><input type="file" id="restoreFile" accept=".json,application/json" hidden></label></div>
       <div id="backupMsg" class="muted" style="margin-top:10px"></div>
@@ -373,60 +373,173 @@ function editField(path, val) {
 }
 
 /* ---------- Excel export ---------- */
-function buildWorkbook(list) {
-  const XL = window.XLSX, wb = XL.utils.book_new(), rows = logRows(list);
-  const chron = list.slice().reverse();
+/* ---------- branded Excel export (TKR black and gold, logo, photos inside the file) ---------- */
+const XC = { BLACK: "FF111111", HEAD: "FF262626", GOLD: "FFD4A12A", CREAM: "FFFFF8E6", WHITE: "FFFFFFFF", GRID: "FFD9D3C5", MUTED: "FF6B6558" };
+const MOVE_FILL = { received: "FFDDF1E3", fitted: "FFFFF2CC", returned: "FFDDF1E3", back: "FFEFEDE7", lost: "FFF8DDD8" };
+async function buildBrandedGET(list, who) {
+  const ExcelJS = window.ExcelJS, wb = new ExcelJS.Workbook(); wb.creator = "TKR Operations"; wb.created = new Date();
+  const rows = logRows(list), chron = list.slice().reverse(), period = `${fmtDate(range.from)} to ${fmtDate(range.to)}`;
+  let logo = null; try { logo = wb.addImage({ buffer: await (await fetch("../icons/icon-512.png")).arrayBuffer(), extension: "png" }); } catch {}
+  const thin = { style: "thin", color: { argb: XC.GRID } }, box = { top: thin, left: thin, bottom: thin, right: thin };
+  const fill = c => ({ type: "pattern", pattern: "solid", fgColor: { argb: c } });
+  const sheet = (name, widths, title) => {
+    const ws = wb.addWorksheet(name, { pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 } });
+    ws.columns = widths.map(w => ({ width: w }));
+    const cols = Math.max(widths.length, 6);
+    for (let r = 1; r <= 4; r++) { ws.getRow(r).height = r === 1 ? 8 : 22; for (let c = 1; c <= cols; c++) ws.getCell(r, c).fill = fill(XC.BLACK); }
+    for (let c = 1; c <= cols; c++) ws.getCell(5, c).fill = fill(XC.GOLD); ws.getRow(5).height = 4;
+    if (logo !== null) ws.addImage(logo, { tl: { col: 0.15, row: 1.05 }, ext: { width: 62, height: 62 } });
+    Object.assign(ws.getCell("B2"), { value: title }); ws.getCell("B2").font = { name: "Arial", size: 18, bold: true, color: { argb: XC.WHITE } };
+    ws.getCell("B3").value = "TKR OPERATIONS  ·  DRILL STORES  ·  THARISA MINE"; ws.getCell("B3").font = { name: "Arial", size: 9, bold: true, color: { argb: XC.GOLD } };
+    ws.getCell("B4").value = `Period: ${period}`; ws.getCell("B4").font = { name: "Arial", size: 10, color: { argb: "FFE8E2D4" } };
+    ws.views = [{ showGridLines: false }];
+    return ws;
+  };
+  const header = (ws, rowNo, labels) => {
+    const row = ws.getRow(rowNo); row.height = 30;
+    labels.forEach((l, i) => { const c = row.getCell(i + 1); c.value = l; c.font = { name: "Arial", size: 10, bold: true, color: { argb: XC.WHITE } }; c.fill = fill(XC.HEAD); c.border = box; c.alignment = { vertical: "middle", horizontal: i ? "center" : "left", wrapText: true }; });
+  };
+  const line = (ws, rowNo, values, i, opts = {}) => {
+    const row = ws.getRow(rowNo); row.values = values; row.height = opts.h || 20;
+    for (let c = 1; c <= values.length; c++) { const cell = row.getCell(c); cell.border = box; cell.font = { name: "Arial", size: 10, bold: !!opts.bold };
+      cell.alignment = { vertical: "middle", wrapText: true, horizontal: typeof values[c - 1] === "number" ? "center" : "left" }; if (i % 2) cell.fill = fill(XC.CREAM); }
+    return row;
+  };
+  const title = (ws, rowNo, text) => { const c = ws.getCell(rowNo, 1); c.value = text; c.font = { name: "Arial", size: 12, bold: true, color: { argb: XC.BLACK } }; ws.getRow(rowNo).height = 22; };
+  const freeze = (ws, y) => { ws.views = [{ state: "frozen", ySplit: y, showGridLines: false }]; };
+  const nPhotos = rows.reduce((n, { m }) => n + (m.photos || []).length, 0);
+
   // Sum up
   const t = {}; ITEMS.forEach(i => t[i] = { received: 0, fitted: 0, returned: 0, back: 0, lost: 0 });
   const perRig = {}; RIGS.forEach(r => { perRig[r] = {}; ITEMS.forEach(i => perRig[r][i] = 0); });
   rows.forEach(({ m }) => { if (t[m.item]) t[m.item][m.type] += Number(m.qty) || 0; if (m.type === "fitted" && perRig[m.rig]) perRig[m.rig][m.item] += Number(m.qty) || 0; });
   const lastShift = list[0], lb = lastShift ? balance(lastShift) : null;
-  const sum = [
-    ["TKR Operations – GET Bakkie Log"],
-    ["Sum up from " + fmtDate(range.from) + " to " + fmtDate(range.to)],
-    ["Shifts logged", list.length, "", "Movements logged", rows.length, "Photos taken", rows.reduce((n, { m }) => n + (m.photos || []).length, 0)],
-    [],
-    ["Item", "Received from store", "Fitted on rigs", "Old items back from rigs", "Handed back to store", "Lost in hole", "In bakkie at end of last shift"],
-    ...ITEMS.map(i => [i, t[i].received, t[i].fitted, t[i].returned, t[i].back, t[i].lost, lb ? lb[i].end : 0]),
-    [],
-    ["Fitted per rig", ...ITEMS],
-    ...RIGS.map(r => [r, ...ITEMS.map(i => perRig[r][i])]),
-  ];
+  const ws1 = sheet("Sum up", [26, 16, 14, 16, 16, 13, 18], "GET Bakkie Log – Sum up");
+  [["Shifts logged", list.length], ["Movements logged", rows.length], ["Photos", nPhotos]].forEach(([k, v], i) => {
+    const c = ws1.getCell(7, 1 + i * 2), d = ws1.getCell(8, 1 + i * 2);
+    c.value = k; c.font = { name: "Arial", size: 9, bold: true, color: { argb: XC.MUTED } };
+    d.value = v; d.font = { name: "Arial", size: 20, bold: true, color: { argb: XC.BLACK } };
+  });
+  ws1.getRow(8).height = 28;
+  header(ws1, 10, ["Item", "Received from store", "Fitted on rigs", "Old items back", "Handed back to store", "Lost in hole", "In bakkie (last shift)"]);
+  ITEMS.forEach((i, n) => line(ws1, 11 + n, [i, t[i].received, t[i].fitted, t[i].returned, t[i].back, t[i].lost, lb ? lb[i].end : 0], n));
+  let r = 11 + ITEMS.length + 1;
+  title(ws1, r++, "Fitted per rig");
+  header(ws1, r++, ["Rig", ...ITEMS]);
+  RIGS.forEach((g, n) => line(ws1, r++, [g, ...ITEMS.map(i => perRig[g][i])], n));
   if (lastShift) {
-    sum.push([], ["On each rig at end of last shift (" + fmtDate(lastShift.date) + " " + lastShift.shift + ")"], ["Rig", "Bits", "Bit no.", "Rods", "Shanks", "Shank no."]);
-    RIGS.forEach(r => { const g = lastShift.rigs?.[r] || {}; sum.push([r, num(g.bits), g.bitNo || "", num(g.rods), num(g.shanks), g.shankNo || ""]); });
+    r++; title(ws1, r++, `On each rig at end of last shift (${fmtDate(lastShift.date)} ${lastShift.shift})`);
+    header(ws1, r++, ["Rig", "Bits", "Bit no.", "Rods", "Shanks", "Shank no."]);
+    RIGS.forEach((g, n) => { const x = lastShift.rigs?.[g] || {}; line(ws1, r++, [g, num(x.bits), x.bitNo || "", num(x.rods), num(x.shanks), x.shankNo || ""], n); });
   }
-  const ws1 = XL.utils.aoa_to_sheet(sum); ws1["!cols"] = [{ wch: 26 }, ...Array(6).fill({ wch: 18 })];
-  XL.utils.book_append_sheet(wb, ws1, "Sum up");
+  r++; const note = ws1.getCell(r, 1); note.value = `Exported ${new Date().toLocaleString("en-ZA")}${who ? " · " + who : ""}`; note.font = { name: "Arial", size: 9, italic: true, color: { argb: XC.MUTED } };
+
+  // Movements with photo thumbnails
+  const ws2 = sheet("Movements", [11, 8, 6, 8, 9, 22, 10, 14, 6, 12, 13, 13, 16, 18, 14, 14, 14, 14], "GET Bakkie Log – Movements");
+  header(ws2, 7, ["Date", "Shift", "Trip", "Time", "On board", "Movement", "Rig", "Item", "Qty", "Item no.", "Old no. back", "Block / hole", "Received by", "Logged by", "GET operator", "Photo", "Photo", "Photo"]);
+  r = 8; let k = 0; const photoList = [];
+  for (const { s, m } of rows) {
+    const ph = m.photos || [], names = photoNames(s, m);
+    const row = line(ws2, r, [fmtDate(s.date), s.shift, tripNo(s, m.trip) || "", m.time || "", m.onBoard || "", TYPES[m.type]?.label || m.type, m.rig || "", m.item, Number(m.qty) || 0, m.itemNo || "", m.oldNo || "", m.block || "", m.by || "", m.loggedBy || "", s.operator || "", "", "", ""], k++, { h: ph.length ? 60 : 20 });
+    row.getCell(6).fill = fill(MOVE_FILL[m.type] || XC.CREAM); row.getCell(6).font = { name: "Arial", size: 10, bold: true };
+    for (let i = 0; i < ph.length; i++) {
+      const p = await store.photo(ph[i]); if (!p) continue;
+      const buf = await p.blob.arrayBuffer(), img = wb.addImage({ buffer: buf, extension: "jpeg" });
+      let w = 1, h = 1; try { const bm = await createImageBitmap(p.blob); w = bm.width; h = bm.height; bm.close?.(); } catch {}
+      photoList.push({ img, w, h, cap: `${fmtDate(s.date)} ${s.shift} ${m.time || ""} · ${TYPES[m.type]?.label || m.type} · ${m.qty} × ${m.item}${m.itemNo ? " · No. " + m.itemNo : ""}${m.rig ? " · " + m.rig : ""}`, name: names[i] });
+      if (i < 3) { const th = 72, tw = Math.min(96, Math.round(th * w / h)); ws2.addImage(img, { tl: { col: 15 + i + 0.05, row: r - 1 + 0.05 }, ext: { width: tw, height: th } }); }
+    }
+    if (ph.length > 3) row.getCell(18).note = `${ph.length} photos – all are on the Photos sheet`;
+    r++;
+  }
+  if (!rows.length) { ws2.getCell("A8").value = "No movements in this period."; ws2.getCell("A8").font = { name: "Arial", italic: true, color: { argb: XC.MUTED } }; }
+  freeze(ws2, 7); if (rows.length) ws2.autoFilter = { from: "A7", to: `O${r - 1}` };
+
+  // Photos sheet, large
+  const ws3 = sheet("Photos", [52, 4, 52], "GET Bakkie Log – Photos");
+  if (!photoList.length) { ws3.getCell("A7").value = "No photos were taken in this period."; ws3.getCell("A7").font = { name: "Arial", italic: true, color: { argb: XC.MUTED } }; }
+  photoList.forEach((ph, i) => {
+    const col = (i % 2) * 2, rowImg = 7 + Math.floor(i / 2) * 2;
+    ws3.getRow(rowImg).height = 200; ws3.getRow(rowImg + 1).height = 34;
+    const H = 255, Wd = Math.min(360, Math.round(H * ph.w / ph.h));
+    ws3.addImage(ph.img, { tl: { col: col + 0.05, row: rowImg - 1 + 0.05 }, ext: { width: Wd, height: H } });
+    const c = ws3.getCell(rowImg + 1, col + 1); c.value = ph.cap; c.font = { name: "Arial", size: 9, color: { argb: XC.BLACK } }; c.alignment = { wrapText: true, vertical: "top" };
+  });
+
   // Shifts
-  const sh = [["Date", "Shift", "GET operator", "Bakkie no.", "Supervisor", "First time out of store", "Last time back at store", "Trips", "Handed over by", "Taken over by", "Handover time", "Counts checked", "Handover notes", "Movements", "Comments", "Signed GET operator", "Signed supervisor", "Signed store controller", "Status"]];
-  chron.forEach(s => { const h = s.handover || {}; sh.push([fmtDate(s.date), s.shift, s.operator, s.bakkie, s.supervisor, s.timeOut, s.timeBack, tripsOf(s).length, h.handedBy, h.takenBy, h.time, h.checked, h.notes, (s.moves || []).length, s.comments, s.signOperator, s.signSupervisor, s.signStore, s.closed ? "Closed" : "Open"]); });
-  const ws2 = XL.utils.aoa_to_sheet(sh); ws2["!cols"] = sh[0].map(() => ({ wch: 16 }));
-  XL.utils.book_append_sheet(wb, ws2, "Shifts");
-  // Movements
-  const tp = [["Date", "Shift", "Trip", "Time out of store", "Time back at store", "Movements", ...ITEMS.map(i => "Loaded from store: " + i)]];
-  chron.forEach(s => tripsOf(s).forEach((tr, i) => {
-    const mvs = (s.moves || []).filter(m => m.trip === tr.id);
-    tp.push([fmtDate(s.date), s.shift, i + 1, tr.out, tr.back, mvs.length, ...ITEMS.map(it => mvs.filter(m => m.type === "received" && m.item === it).reduce((n, m) => n + (Number(m.qty) || 0), 0))]);
-  }));
-  const mv = [["Date", "Shift", "Trip", "Time", "Time on board", "Movement", "Rig", "Item", "Qty", "Item no.", "Old item no. returned", "Block / hole", "Received by", "GET operator", "Bakkie no.", "Photos (in the Photos folder)", "Logged by"]];
-  rows.forEach(({ s, m }) => mv.push([fmtDate(s.date), s.shift, tripNo(s, m.trip), m.time, m.onBoard, TYPES[m.type]?.label || m.type, m.rig, m.item, Number(m.qty) || 0, m.itemNo, m.oldNo, m.block, m.by, s.operator, s.bakkie, photoNames(s, m).join(", "), m.loggedBy || ""]));
-  const ws3 = XL.utils.aoa_to_sheet(mv); ws3["!cols"] = mv[0].map((h, i) => ({ wch: i === 15 ? 60 : i === 2 ? 6 : 16 }));
-  XL.utils.book_append_sheet(wb, ws3, "Movements");
-  const wsT = XL.utils.aoa_to_sheet(tp); wsT["!cols"] = tp[0].map((h, i) => ({ wch: i < 6 ? 14 : 24 }));
-  XL.utils.book_append_sheet(wb, wsT, "Trips");
-  // Bakkie and rig counts per shift
-  const bk = [["Date", "Shift", "Item", "Start qty", "Time on board", "Received", "Fitted", "Old back", "To store", "Lost in hole", "End qty", "Item numbers"]];
-  chron.forEach(s => { const b = balance(s); ITEMS.forEach(i => { const st = s.start?.[i] || {}; if (b[i].start || b[i].received || b[i].fitted || b[i].returned || b[i].back || b[i].lost || st.nos)
-    bk.push([fmtDate(s.date), s.shift, i, b[i].start, st.time || "", b[i].received, b[i].fitted, b[i].returned, b[i].back, b[i].lost, b[i].end, st.nos || ""]); }); });
-  const rg = [["Date", "Shift", "Rig", "Bits", "Bit no.", "Rods", "Shanks", "Shank no.", "Time on board"]];
-  chron.forEach(s => RIGS.forEach(r => { const g = s.rigs?.[r] || {}; if (g.bits || g.rods || g.shanks || g.bitNo || g.shankNo) rg.push([fmtDate(s.date), s.shift, r, num(g.bits), g.bitNo || "", num(g.rods), num(g.shanks), g.shankNo || "", g.time || ""]); }));
-  const ws4 = XL.utils.aoa_to_sheet(bk); ws4["!cols"] = bk[0].map(() => ({ wch: 14 }));
-  XL.utils.book_append_sheet(wb, ws4, "Bakkie per shift");
-  const ws5 = XL.utils.aoa_to_sheet(rg); ws5["!cols"] = rg[0].map(() => ({ wch: 14 }));
-  XL.utils.book_append_sheet(wb, ws5, "Rigs per shift");
-  return wb;
+  const ws4 = sheet("Shifts", [11, 8, 18, 11, 16, 11, 11, 7, 16, 16, 10, 15, 24, 10, 24, 16, 16, 16, 9], "GET Bakkie Log – Shifts");
+  header(ws4, 7, ["Date", "Shift", "GET operator", "Bakkie no.", "Supervisor", "First out of store", "Last back at store", "Trips", "Handed over by", "Taken over by", "Handover time", "Counts checked", "Handover notes", "Movements", "Comments", "Signed GET operator", "Signed supervisor", "Signed store controller", "Status"]);
+  chron.forEach((x, n) => { const h = x.handover || {}; line(ws4, 8 + n, [fmtDate(x.date), x.shift, x.operator || "", x.bakkie || "", x.supervisor || "", x.timeOut || "", x.timeBack || "", tripsOf(x).length, h.handedBy || "", h.takenBy || "", h.time || "", h.checked || "", h.notes || "", (x.moves || []).length, x.comments || "", x.signOperator || "", x.signSupervisor || "", x.signStore || "", x.closed ? "Closed" : "Open"], n); });
+  freeze(ws4, 7);
+
+  // Trips
+  const ws5 = sheet("Trips", [11, 8, 6, 14, 14, 11, ...ITEMS.map(() => 13)], "GET Bakkie Log – Trips");
+  header(ws5, 7, ["Date", "Shift", "Trip", "Out of store", "Back at store", "Movements", ...ITEMS.map(i => "Loaded: " + i)]);
+  r = 8; k = 0;
+  chron.forEach(x => tripsOf(x).forEach((tr, i) => { const mv = (x.moves || []).filter(m => m.trip === tr.id);
+    line(ws5, r++, [fmtDate(x.date), x.shift, i + 1, tr.out || "", tr.back || "", mv.length, ...ITEMS.map(it => mv.filter(m => m.type === "received" && m.item === it).reduce((a, m) => a + (Number(m.qty) || 0), 0))], k++); }));
+  freeze(ws5, 7);
+
+  // Bakkie and rigs per shift
+  const ws6 = sheet("Bakkie per shift", [11, 8, 14, 10, 11, 10, 10, 10, 10, 11, 10, 26], "GET Bakkie Log – Bakkie per shift");
+  header(ws6, 7, ["Date", "Shift", "Item", "Start qty", "On board", "Received", "Fitted", "Old back", "To store", "Lost in hole", "End qty", "Item numbers"]);
+  r = 8; k = 0;
+  chron.forEach(x => { const b = balance(x); ITEMS.forEach(i => { const st = x.start?.[i] || {}; if (b[i].start || b[i].received || b[i].fitted || b[i].returned || b[i].back || b[i].lost || st.nos)
+    line(ws6, r++, [fmtDate(x.date), x.shift, i, b[i].start, st.time || "", b[i].received, b[i].fitted, b[i].returned, b[i].back, b[i].lost, b[i].end, st.nos || ""], k++); }); });
+  freeze(ws6, 7);
+  const ws7 = sheet("Rigs per shift", [11, 8, 10, 8, 14, 8, 8, 14, 11], "GET Bakkie Log – Rigs per shift");
+  header(ws7, 7, ["Date", "Shift", "Rig", "Bits", "Bit no.", "Rods", "Shanks", "Shank no.", "On board"]);
+  r = 8; k = 0;
+  chron.forEach(x => RIGS.forEach(g => { const y = x.rigs?.[g] || {}; if (y.bits || y.rods || y.shanks || y.bitNo || y.shankNo) line(ws7, r++, [fmtDate(x.date), x.shift, g, num(y.bits), y.bitNo || "", num(y.rods), num(y.shanks), y.shankNo || "", y.time || ""], k++); }));
+  freeze(ws7, 7);
+  freeze(ws1, 5);
+  return await wb.xlsx.writeBuffer();
 }
+
+/* ---------- who may export: an admin signs in on the tablet, or an admin approves the operator's request ---------- */
+let exportPass = null, exportReq = null, exportMsg = "", showAdminExport = false;
+const canExport = () => !!exportPass && Date.now() < exportPass.until;
+try { exportReq = JSON.parse(localStorage.getItem("get-export-req") || "null"); } catch {}
+const saveReq = () => { try { exportReq ? localStorage.setItem("get-export-req", JSON.stringify(exportReq)) : localStorage.removeItem("get-export-req"); } catch {} };
+function exportGate() {
+  if (canExport()) return `<div class="info">Export allowed until ${new Date(exportPass.until).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" })} (${esc(exportPass.by)}).</div>`;
+  const req = exportReq && exportReq.op === opNow?.uid ? exportReq : null;
+  return `<div class="card">
+    <h2>Exporting is done by an admin</h2>
+    <p class="muted" style="margin-top:0">Muneer or Amogelang can sign in here to export, or you can ask them for permission. Both need signal.</p>
+    ${req ? `<p>Your request for ${fmtDate(req.from)} to ${fmtDate(req.to)} is <b>${req.status === "approved" ? "approved" : req.status === "declined" ? "declined" : "waiting for an admin"}</b>.</p>` : ""}
+    <div class="row">
+      <button class="primary" id="askExport">${req && req.status === "pending" ? "Check again" : "Ask an admin for permission"}</button>
+      <button id="adminExport">Admin: sign in to export</button>
+    </div>
+    ${showAdminExport ? `<form id="adminExportForm" class="grid" style="margin-top:12px" autocomplete="off">
+      <label>Admin email <input id="aeEmail" type="email" autocomplete="username"></label>
+      <label>Password <input id="aePass" type="password" autocomplete="current-password"></label>
+      <div style="display:flex;align-items:flex-end"><button class="primary" style="width:100%">Sign in</button></div></form>` : ""}
+    <p class="flag" id="exportErr">${esc(exportMsg)}</p>
+  </div>`;
+}
+async function askOrCheckExport() {
+  exportMsg = "";
+  if (!navigator.onLine) { exportMsg = "No signal. Asking for permission needs signal."; render(); return; }
+  try {
+    await ensureSignedIn();
+    if (fbAuth.currentUser?.uid !== opNow?.uid) { exportMsg = "Lock the log and sign in again with your PIN while you have signal, then try again."; render(); return; }
+    const req = exportReq && exportReq.op === opNow.uid ? exportReq : null;
+    if (req && req.status === "pending") {
+      const d = await fb.getDoc(fb.doc(fbDb, "getExportRequests", req.id));
+      if (!d.exists()) { exportReq = null; saveReq(); exportMsg = "The request was removed. Ask again."; render(); return; }
+      const v = d.data(); req.status = v.status; saveReq();
+      if (v.status === "approved") { exportPass = { by: "approved by " + (v.approvedBy || "an admin"), until: Math.min((v.approvedAt || Date.now()) + 24 * 3600e3, Date.now() + 24 * 3600e3) }; range.from = v.from; range.to = v.to; }
+      else exportMsg = v.status === "declined" ? "An admin declined the request." : "Still waiting for an admin.";
+      render(); return;
+    }
+    const ref = await fb.addDoc(fb.collection(fbDb, "getExportRequests"), { opUid: opNow.uid, opName: opNow.name, from: range.from, to: range.to, status: "pending", createdAt: Date.now() });
+    exportReq = { id: ref.id, op: opNow.uid, from: range.from, to: range.to, status: "pending" }; saveReq();
+    exportMsg = "Request sent. Tap Check again once an admin has approved it."; render();
+  } catch (x) { exportMsg = "That didn't work. Check the signal and try again."; render(); }
+}
+
 function num(v) { return v === "" || v == null ? "" : (isNaN(Number(v)) ? v : Number(v)); }
 
 async function shareOrDownload(blob, filename) {
@@ -458,30 +571,21 @@ app.addEventListener("click", async e => {
     if (open && !confirm(`The ${fmtDate(open.date)} ${open.shift} shift is still open. Start the next shift anyway?`)) return;
     current = newShift(); await save("Shift started"); render(); scrollTo(0, 0); return;
   }
-  if (t.id === "xlsx" || t.id === "zip") {
-    try { await loadLib("../lib/xlsx.full.min.js"); if (t.id === "zip") await loadLib("../lib/jszip.min.js"); } catch { alert("The export needs the app to be opened once with signal."); return; }
+  if (t.id === "askExport") { t.disabled = true; await askOrCheckExport(); return; }
+  if (t.id === "adminExport") { showAdminExport = !showAdminExport; exportMsg = ""; render(); return; }
+  if (t.id === "xlsx") {
+    if (!canExport()) { render(); return; }
+    try { await loadLib("../lib/exceljs.min.js"); } catch { alert("The export needs the app to be opened once with signal."); return; }
     const list = inRange();
     if (!list.length) { alert("There are no shifts in these dates."); return; }
-    const name = `TKR_GET_Bakkie_Log_${fmtDate(range.from).replace(/\//g, "-")}_to_${fmtDate(range.to).replace(/\//g, "-")}`;
-    const out = XLSX.write(buildWorkbook(list), { bookType: "xlsx", type: "array" });
-    const done = r => { if (r !== "cancelled") lastExport = { ids: list.map(s => s.id), from: range.from, to: range.to, photos: t.id === "zip" }; };
-    if (t.id === "xlsx") {
-      done(await shareOrDownload(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), name + ".xlsx"));
-      render(); return;
-    }
-    t.disabled = true; t.textContent = "Making zip…";
+    t.disabled = true; t.textContent = "Making the Excel file…";
     try {
-      const zip = new JSZip(); zip.file(name + ".xlsx", out);
-      const folder = zip.folder("Photos"); let n = 0;
-      for (const { s, m } of logRows(list)) {
-        const names = photoNames(s, m);
-        for (let i = 0; i < (m.photos || []).length; i++) { const p = await store.photo(m.photos[i]); if (p) { folder.file(names[i], p.blob); n++; } }
-      }
-      const blob = await zip.generateAsync({ type: "blob", mimeType: "application/zip" });
-      done(await shareOrDownload(blob, name + ".zip"));
-      if (!n) alert("The zip has the Excel file only. No photos were taken in these dates.");
-    } finally { render(); }
-    return;
+      const out = await buildBrandedGET(list, exportPass.by);
+      const name = `TKR_GET_Bakkie_Log_${fmtDate(range.from).replace(/\//g, "-")}_to_${fmtDate(range.to).replace(/\//g, "-")}.xlsx`;
+      const r = await shareOrDownload(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), name);
+      if (r !== "cancelled") lastExport = { ids: list.map(s => s.id), from: range.from, to: range.to, photos: true };
+    } catch (x) { console.warn(x); alert("The Excel file couldn't be made. Try a shorter date range."); }
+    render(); return;
   }
   if (t.id === "newTrip") {
     const tr = tripsOf(current); if (tr.length && !tr.at(-1).back) tr.at(-1).back = nowHM();
@@ -502,6 +606,7 @@ app.addEventListener("click", async e => {
   if (t.id === "takePhoto") { photoTarget = null; $("#camera").click(); return; }
   if (t.dataset.addphoto) { photoTarget = t.dataset.addphoto; $("#camera").click(); return; }
   if (t.id === "backup") {
+    if (!canExport()) { alert("Making a backup file is done by an admin, or with an admin's permission. Go to Movement log to ask."); return; }
     t.disabled = true; t.textContent = "Making backup…";
     const photos = [];
     for (const s of shifts) for (const m of s.moves || []) for (const id of m.photos || []) { const p = await store.photo(id); if (p) photos.push({ id, data: await blobToDataURL(p.blob) }); }
@@ -552,6 +657,18 @@ app.addEventListener("change", async e => {
   if (id === "mType") toggleRig();
 });
 app.addEventListener("submit", async e => {
+  if (e.target.id === "adminExportForm") {
+    e.preventDefault(); exportMsg = "Checking…"; $("#exportErr").textContent = exportMsg;
+    try {
+      await firebase();
+      const tmp = fb.initializeApp(FIREBASE_CONFIG, "get-admin-" + Date.now()), a = fb.getAuth(tmp);
+      const cred = await fb.signInWithEmailAndPassword(a, $("#aeEmail").value.trim(), $("#aePass").value);
+      const em = (cred.user.email || "").toLowerCase(); await fb.signOut(a).catch(() => {}); fb.deleteApp(tmp).catch(() => {});
+      if (!["muneer@tkroperations.com", "amogelang@tkroperations.com"].includes(em)) { exportMsg = "Only Muneer or Amogelang can export."; render(); return; }
+      exportPass = { by: em, until: Date.now() + 15 * 60e3 }; exportMsg = ""; showAdminExport = false; render();
+    } catch (x) { exportMsg = !navigator.onLine ? "No signal. Signing in needs signal." : "Email or password is wrong."; render(); }
+    return;
+  }
   if (e.target.id !== "moveForm") return;
   e.preventDefault();
   const type = $("#mType").value, qty = Number($("#mQty").value);
@@ -720,7 +837,11 @@ $("#lockForm").addEventListener("submit", async e => {
     const lo = localOps.find(o => o.uid === picked.id);
     if (lo && lo.hash && (await hashPin(pin, lo.salt)) === lo.hash) {
       if (!lo.approved && !navigator.onLine) { err().textContent = "You are not approved yet. Check again with signal."; return; }
-      if (lo.approved) { unlock(lo); checkStillApproved(); return; }
+      if (lo.approved) {
+        unlock(lo);
+        (async () => { try { if (navigator.onLine && await firebase()) { await fbAuth.authStateReady?.(); if (fbAuth.currentUser?.uid !== lo.uid) await fb.signInWithEmailAndPassword(fbAuth, lo.authEmail, opPass(pin, lo.key)); } } catch {} checkStillApproved(); })();
+        return;
+      }
     } else if (lo && lo.hash && !navigator.onLine) { $("#lPin").value = ""; err().textContent = "Wrong PIN."; return; }
     if (!navigator.onLine) { err().textContent = "No signal. The first sign-in on this tablet needs signal."; return; }
     err().textContent = "Signing in…";

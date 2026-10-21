@@ -80,9 +80,11 @@ $("signForm").onsubmit = async e => {
 };
 
 /* ---------- live data ---------- */
-let started = false, unsubTeam = null, unsubRoles = null, unsubOps = null, getOps = [];
+let started = false, unsubTeam = null, unsubRoles = null, unsubOps = null, getOps = [], unsubReqs = null, getReqs = [];
 function start() {
   if (unsubTeam) unsubTeam(); if (unsubRoles) unsubRoles(); if (unsubOps) { unsubOps(); unsubOps = null; }
+  if (unsubReqs) { unsubReqs(); unsubReqs = null; }
+  if (isAdmin()) unsubReqs = onSnapshot(collection(db, "getExportRequests"), s => { getReqs = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 15); renderManage(); }, () => {});
   if (isAdmin()) unsubOps = onSnapshot(collection(db, "getOperators"), s => { getOps = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.approved - b.approved) || a.name.localeCompare(b.name)); renderManage(); }, () => {});
   unsubRoles = onSnapshot(doc(db, "config", "roles"), s => { managers = ((s.exists() && s.data().managers) || []).map(x => String(x).toLowerCase()); renderAll(); }, () => {});
   unsubTeam = onSnapshot(collection(db, "team"), s => {
@@ -205,6 +207,7 @@ function renderManage() {
   if (!isAdmin()) return;
   $("teamList").innerHTML = team.length ? team.map(p => `<div class="it"><span>${esc(p.name)} <span class="muted">· ${p.uid ? "PIN set" : "no PIN yet"}</span></span><span class="row" style="gap:6px">${p.uid ? `<button data-resetpin="${esc(p.id)}">Reset PIN</button>` : ""}<button class="danger" data-rm="${esc(p.id)}">Remove</button></span></div>`).join("") : `<div class="muted">No employees yet.</div>`;
   $("opList").innerHTML = getOps.length ? getOps.map(o => `<div class="it"><span>${esc(o.name)} <span class="muted">· ${o.approved ? "approved" : "waiting for approval"}</span></span><span class="row" style="gap:6px">${o.approved ? "" : `<button class="primary" data-opok="${esc(o.id)}">Approve</button>`}<button class="danger" data-opdel="${esc(o.id)}">${o.approved ? "Reset PIN / remove" : "Decline"}</button></span></div>`).join("") : `<div class="muted">No GET operators have registered yet.</div>`;
+  $("reqList").innerHTML = getReqs.length ? getReqs.map(q => `<div class="it"><span>${esc(q.opName)} <span class="muted">· ${fmt(q.from)} to ${fmt(q.to)} · ${q.status === "pending" ? "waiting" : q.status}</span></span>${q.status === "pending" ? `<span class="row" style="gap:6px"><button class="primary" data-reqok="${esc(q.id)}">Approve</button><button class="danger" data-reqno="${esc(q.id)}">Decline</button></span>` : ""}</div>`).join("") : `<div class="muted">No export requests.</div>`;
   $("mgrList").innerHTML = (managers.length ? managers : []).map(m => `<div class="it"><span>${esc(m)}</span><button class="danger" data-rmmgr="${esc(m)}">Remove</button></div>`).join("") || `<div class="muted">No managers added yet.</div>`;
 }
 
@@ -329,6 +332,8 @@ $("addPerson").onsubmit = e => {
 };
 $("manageBox").addEventListener("click", async e => {
   const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.reqok) { updateDoc(doc(db, "getExportRequests", b.dataset.reqok), { status: "approved", approvedBy: email, approvedAt: Date.now() }).then(() => toast("Export approved")).catch(fail); return; }
+  if (b.dataset.reqno) { updateDoc(doc(db, "getExportRequests", b.dataset.reqno), { status: "declined", approvedBy: email, approvedAt: Date.now() }).catch(fail); return; }
   if (b.dataset.opok) { updateDoc(doc(db, "getOperators", b.dataset.opok), { approved: true, approvedBy: email, approvedAt: Date.now() }).then(() => toast("Approved")).catch(fail); return; }
   if (b.dataset.opdel) { const o = getOps.find(x => x.id === b.dataset.opdel); if (o && confirm(`Remove ${o.name}'s GET sign-in? They can register again with a new PIN.`)) deleteDoc(doc(db, "getOperators", o.id)).catch(fail); return; }
   if (b.dataset.resetpin) {
