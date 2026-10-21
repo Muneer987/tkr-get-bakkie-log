@@ -2,7 +2,8 @@
 
 Offline tablet app for TKR Operations Drill Stores (Tharisa). The GET operator logs every bit, rod and shank that goes on or off the bakkie, shift by shift.
 
-- Shifts by date, Day/Night, time out of store and time back
+- Shifts by date, Day/Night
+- Trips to the store: each store run in a shift has its own time out, time back and stock loaded
 - Shift change: last shift's bakkie and rig counts carry over as the new start
 - Every movement: received from store, fitted on rig, old item back, handed back to store, lost in hole, with time on board, item numbers and block/hole
 - Rig counts at end of shift and sign-off

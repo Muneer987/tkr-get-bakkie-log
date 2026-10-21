@@ -105,10 +105,18 @@ function newShift() {
   ITEMS.forEach(i => start[i] = { qty: pb && pb[i].end ? String(pb[i].end) : "", time: "", nos: prev?.start?.[i]?.nos || "" });
   RIGS.forEach(r => rigs[r] = prev?.rigs?.[r] ? { ...prev.rigs[r], time: "" } : { bits: "", bitNo: "", rods: "", shanks: "", shankNo: "", time: "" });
   return { id: newId(), date: isoDate(d), shift: night ? "Night" : "Day", operator: prev?.operator || "", bakkie: prev?.bakkie || "", supervisor: "",
-    timeOut: nowHM(), timeBack: "", start, moves: [], rigs, comments: "",
+    timeOut: nowHM(), timeBack: "", trips: [{ id: newId(), out: nowHM(), back: "" }], start, moves: [], rigs, comments: "",
     handover: { fromLabel: prev ? fmtDate(prev.date) + " " + prev.shift : "", handedBy: prev?.operator || "", takenBy: "", time: nowHM(), checked: "", notes: "" },
     signOperator: "", signSupervisor: "", signStore: "", closed: false, createdAt: Date.now() };
 }
+
+/* ---------- trips: each run to the store in a shift. Shift time out = first trip out, time back = last trip back ---------- */
+function tripsOf(s) {
+  if (!Array.isArray(s.trips)) s.trips = (s.timeOut || s.timeBack) ? [{ id: "t1", out: s.timeOut || "", back: s.timeBack || "" }] : [];
+  return s.trips;
+}
+const tripNo = (s, id) => { const i = tripsOf(s).findIndex(t => t.id === id); return i < 0 ? "" : i + 1; };
+function syncTimes(s) { const t = tripsOf(s); s.timeOut = t[0]?.out || ""; s.timeBack = t.length ? (t.at(-1).back || "") : ""; }
 
 /* ---------- clear after export: keeps the latest shift (for the shift-change carry-over) and any open shift ---------- */
 let lastExport = null;
@@ -155,7 +163,7 @@ function shiftList(list) {
     const n = (s.moves || []).length;
     if (s.date !== lastDate) { if (lastDate) html += `</div>`; html += `<div class="datehead">${esc(dayName(s.date))} ${esc(fmtDate(s.date))}</div><div class="shifts">`; lastDate = s.date; }
     html += `<button class="shift card" data-open="${esc(s.id)}">
-      <span><b>${esc(s.shift)} shift</b><br><span class="muted">${esc(s.operator || "No operator yet")}${s.bakkie ? " · " + esc(s.bakkie) : ""} · ${n} movement${n === 1 ? "" : "s"}${s.timeOut ? " · out " + esc(s.timeOut) : ""}${s.timeBack ? " – back " + esc(s.timeBack) : ""}</span></span>
+      <span><b>${esc(s.shift)} shift</b><br><span class="muted">${esc(s.operator || "No operator yet")}${s.bakkie ? " · " + esc(s.bakkie) : ""} · ${tripsOf(s).length} trip${tripsOf(s).length === 1 ? "" : "s"} · ${n} movement${n === 1 ? "" : "s"}${s.timeOut ? " · out " + esc(s.timeOut) : ""}${s.timeBack ? " – back " + esc(s.timeBack) : ""}</span></span>
       <span class="pill ${s.closed ? "closed" : "open"}">${s.closed ? "Closed" : "Open"}</span></button>`;
   });
   return html + `</div>`;
@@ -172,8 +180,8 @@ function logTable(list) {
   const sum = {}; rows.forEach(({ m }) => { sum[m.type] = (sum[m.type] || 0) + (Number(m.qty) || 0); });
   return `<div class="card" style="padding:12px 16px"><div class="row" style="gap:18px">${Object.entries(TYPES).map(([k, t]) => `<span><span class="muted">${t.label}</span> <b class="num">${sum[k] || 0}</b></span>`).join("")}</div></div>
   <div class="card wide"><div class="tbl"><table>
-    <thead><tr><th>Date</th><th>Shift</th><th>Time</th><th>On board</th><th>Movement</th><th>Rig</th><th>Item</th><th class="num">Qty</th><th>Item no.</th><th>Old no. back</th><th>Block / hole</th><th>Received by</th><th>Operator</th><th class="num">Photos</th></tr></thead>
-    <tbody>${rows.map(({ s, m }) => `<tr><td>${esc(fmtDate(s.date))}</td><td>${esc(s.shift)}</td><td class="num">${esc(m.time)}</td><td class="num">${esc(m.onBoard)}</td>
+    <thead><tr><th>Date</th><th>Shift</th><th>Trip</th><th>Time</th><th>On board</th><th>Movement</th><th>Rig</th><th>Item</th><th class="num">Qty</th><th>Item no.</th><th>Old no. back</th><th>Block / hole</th><th>Received by</th><th>Operator</th><th class="num">Photos</th></tr></thead>
+    <tbody>${rows.map(({ s, m }) => `<tr><td>${esc(fmtDate(s.date))}</td><td>${esc(s.shift)}</td><td class="num">${tripNo(s, m.trip)}</td><td class="num">${esc(m.time)}</td><td class="num">${esc(m.onBoard)}</td>
       <td class="${m.type === "lost" ? "flag" : ""}">${esc(TYPES[m.type]?.label || m.type)}</td><td>${esc(m.rig)}</td><td>${esc(m.item)}</td><td class="num">${esc(m.qty)}</td>
       <td>${esc(m.itemNo)}</td><td>${esc(m.oldNo)}</td><td>${esc(m.block)}</td><td>${esc(m.by)}</td><td>${esc(s.operator)}</td><td class="num">${(m.photos || []).length || ""}</td></tr>`).join("")}</tbody></table></div></div>`;
 }
@@ -209,7 +217,8 @@ function renderShift() {
   }).join("");
   const moves = (s.moves || []).slice().sort((a, b) => (a.time || "").localeCompare(b.time || "")).map(m => {
     const t = TYPES[m.type] || TYPES.received;
-    const detail = [m.onBoard && "on board " + m.onBoard, m.itemNo && "No. " + m.itemNo, m.oldNo && "old " + m.oldNo + " back", m.block && "block/hole " + m.block, m.by && "received by " + m.by].filter(Boolean).join(" · ");
+    const tn = tripNo(s, m.trip);
+    const detail = [tn && "Trip " + tn, m.onBoard && "on board " + m.onBoard, m.itemNo && "No. " + m.itemNo, m.oldNo && "old " + m.oldNo + " back", m.block && "block/hole " + m.block, m.by && "received by " + m.by].filter(Boolean).join(" · ");
     const thumbs = (m.photos || []).map(id => `<img class="thumb" data-photo="${esc(id)}" data-move="${esc(m.id)}" alt="Photo">`).join("");
     return `<div class="move ${t.cls}"><span class="t">${esc(m.time)}</span>
       <span class="what"><b>${esc(m.qty)} × ${esc(m.item)} – ${esc(t.label)}${t.rig && m.rig ? " – " + esc(m.rig) : ""}</b><span class="muted">${esc(detail)}</span>
@@ -227,6 +236,16 @@ function renderShift() {
       <td style="width:110px">${field(`rigs.${r}.time`, g.time, 'type="time" aria-label="Time on board"')}</td></tr>`;
   }).join("");
   const lost = (s.moves || []).filter(m => m.type === "lost");
+  const trips = tripsOf(s);
+  const tripRows = trips.map((tr, i) => {
+    const mv = (s.moves || []).filter(m => m.trip === tr.id);
+    const loaded = mv.filter(m => m.type === "received").reduce((n, m) => n + (Number(m.qty) || 0), 0);
+    return `<tr><td><b>Trip ${i + 1}</b></td>
+      <td style="width:130px">${field(`trips.${i}.out`, tr.out, 'type="time" aria-label="Time out of store"')}</td>
+      <td style="width:130px">${field(`trips.${i}.back`, tr.back, 'type="time" aria-label="Time back at store"')}</td>
+      <td class="num">${mv.length}</td><td class="num">${loaded}</td>
+      <td>${ro ? "" : (!tr.back ? `<button data-tripback="${i}">Back at store</button>` : "") + (!mv.length && trips.length > 1 ? ` <button class="ghost" data-tripdel="${i}">Remove</button>` : "")}</td></tr>`;
+  }).join("");
   app.innerHTML = `
     <div class="sticky row" style="justify-content:space-between">
       <button class="ghost" id="back">← All shifts</button>
@@ -237,8 +256,6 @@ function renderShift() {
       <div class="grid">
         <label>Date ${field("date", s.date, 'type="date"')}</label>
         <label>Shift <select data-f="shift" ${off}>${["Day", "Night"].map(x => `<option ${s.shift === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>
-        <label>Time out of store ${field("timeOut", s.timeOut, 'type="time"')}</label>
-        <label>Time back at store ${field("timeBack", s.timeBack, 'type="time"')}</label>
         <label>GET operator ${field("operator", s.operator, 'placeholder="Name"')}</label>
         <label>Bakkie no. ${field("bakkie", s.bakkie, 'placeholder="Bakkie no."')}</label>
         <label>Supervisor ${field("supervisor", s.supervisor, 'placeholder="Name"')}</label>
@@ -266,10 +283,22 @@ function renderShift() {
       <p class="muted" style="margin:8px 0 0">In bakkie now = start + received − fitted + old back − to store. It updates with every movement.</p>
     </section>
 
+    <section class="card">
+      <h2>Trips to the store</h2>
+      ${trips.length ? `<div class="tbl"><table>
+        <thead><tr><th>Trip</th><th>Time out of store</th><th>Time back at store</th><th class="num">Movements</th><th class="num">Loaded from store</th><th></th></tr></thead>
+        <tbody>${tripRows}</tbody></table></div>` : ""}
+      <div class="row" style="margin-top:10px;justify-content:space-between">
+        <span class="muted">Every time the bakkie goes to the store, start a new trip. Movements in B go on the trip you choose.</span>
+        ${ro ? "" : `<button class="primary" id="newTrip">Start a new trip</button>`}
+      </div>
+    </section>
+
     <div class="cols">
       <section class="card">
         <h2>B. Add a movement</h2>
         <form id="moveForm" class="grid" autocomplete="off">
+          ${trips.length ? `<label>Trip <select id="mTrip" ${off}>${trips.map((tr, i) => `<option value="${esc(tr.id)}" ${i === trips.length - 1 ? "selected" : ""}>Trip ${i + 1}</option>`).join("")}</select></label>` : ""}
           <label>Movement <select id="mType" ${off}>${Object.entries(TYPES).map(([k, t]) => `<option value="${k}">${t.label}</option>`).join("")}</select></label>
           <label id="rigWrap">Rig <select id="mRig" ${off}>${RIGS.map(r => `<option>${r}</option>`).join("")}</select></label>
           <label>Item <select id="mItem" ${off}>${ITEMS.map(i => `<option>${i}</option>`).join("")}</select></label>
@@ -326,6 +355,7 @@ function setStatus(m) { statusMsg = m; const el = $("#status"); if (el) el.textC
 /* ---------- saving ---------- */
 async function save(msg = "Saved " + nowHM()) {
   clearTimeout(saveTimer);
+  syncTimes(current);
   const i = shifts.findIndex(x => x.id === current.id);
   if (i >= 0) shifts[i] = current; else shifts.push(current);
   try { await store.put(structuredClone(current)); setStatus(msg); }
@@ -365,15 +395,22 @@ function buildWorkbook(list) {
   const ws1 = XL.utils.aoa_to_sheet(sum); ws1["!cols"] = [{ wch: 26 }, ...Array(6).fill({ wch: 18 })];
   XL.utils.book_append_sheet(wb, ws1, "Sum up");
   // Shifts
-  const sh = [["Date", "Shift", "GET operator", "Bakkie no.", "Supervisor", "Time out of store", "Time back at store", "Handed over by", "Taken over by", "Handover time", "Counts checked", "Handover notes", "Movements", "Comments", "Signed GET operator", "Signed supervisor", "Signed store controller", "Status"]];
-  chron.forEach(s => { const h = s.handover || {}; sh.push([fmtDate(s.date), s.shift, s.operator, s.bakkie, s.supervisor, s.timeOut, s.timeBack, h.handedBy, h.takenBy, h.time, h.checked, h.notes, (s.moves || []).length, s.comments, s.signOperator, s.signSupervisor, s.signStore, s.closed ? "Closed" : "Open"]); });
+  const sh = [["Date", "Shift", "GET operator", "Bakkie no.", "Supervisor", "First time out of store", "Last time back at store", "Trips", "Handed over by", "Taken over by", "Handover time", "Counts checked", "Handover notes", "Movements", "Comments", "Signed GET operator", "Signed supervisor", "Signed store controller", "Status"]];
+  chron.forEach(s => { const h = s.handover || {}; sh.push([fmtDate(s.date), s.shift, s.operator, s.bakkie, s.supervisor, s.timeOut, s.timeBack, tripsOf(s).length, h.handedBy, h.takenBy, h.time, h.checked, h.notes, (s.moves || []).length, s.comments, s.signOperator, s.signSupervisor, s.signStore, s.closed ? "Closed" : "Open"]); });
   const ws2 = XL.utils.aoa_to_sheet(sh); ws2["!cols"] = sh[0].map(() => ({ wch: 16 }));
   XL.utils.book_append_sheet(wb, ws2, "Shifts");
   // Movements
-  const mv = [["Date", "Shift", "Time", "Time on board", "Movement", "Rig", "Item", "Qty", "Item no.", "Old item no. returned", "Block / hole", "Received by", "GET operator", "Bakkie no.", "Photos (in the Photos folder)"]];
-  rows.forEach(({ s, m }) => mv.push([fmtDate(s.date), s.shift, m.time, m.onBoard, TYPES[m.type]?.label || m.type, m.rig, m.item, Number(m.qty) || 0, m.itemNo, m.oldNo, m.block, m.by, s.operator, s.bakkie, photoNames(s, m).join(", ")]));
-  const ws3 = XL.utils.aoa_to_sheet(mv); ws3["!cols"] = mv[0].map((h, i) => ({ wch: i === 14 ? 60 : 16 }));
+  const tp = [["Date", "Shift", "Trip", "Time out of store", "Time back at store", "Movements", ...ITEMS.map(i => "Loaded from store: " + i)]];
+  chron.forEach(s => tripsOf(s).forEach((tr, i) => {
+    const mvs = (s.moves || []).filter(m => m.trip === tr.id);
+    tp.push([fmtDate(s.date), s.shift, i + 1, tr.out, tr.back, mvs.length, ...ITEMS.map(it => mvs.filter(m => m.type === "received" && m.item === it).reduce((n, m) => n + (Number(m.qty) || 0), 0))]);
+  }));
+  const mv = [["Date", "Shift", "Trip", "Time", "Time on board", "Movement", "Rig", "Item", "Qty", "Item no.", "Old item no. returned", "Block / hole", "Received by", "GET operator", "Bakkie no.", "Photos (in the Photos folder)"]];
+  rows.forEach(({ s, m }) => mv.push([fmtDate(s.date), s.shift, tripNo(s, m.trip), m.time, m.onBoard, TYPES[m.type]?.label || m.type, m.rig, m.item, Number(m.qty) || 0, m.itemNo, m.oldNo, m.block, m.by, s.operator, s.bakkie, photoNames(s, m).join(", ")]));
+  const ws3 = XL.utils.aoa_to_sheet(mv); ws3["!cols"] = mv[0].map((h, i) => ({ wch: i === 15 ? 60 : i === 2 ? 6 : 16 }));
   XL.utils.book_append_sheet(wb, ws3, "Movements");
+  const wsT = XL.utils.aoa_to_sheet(tp); wsT["!cols"] = tp[0].map((h, i) => ({ wch: i < 6 ? 14 : 24 }));
+  XL.utils.book_append_sheet(wb, wsT, "Trips");
   // Bakkie and rig counts per shift
   const bk = [["Date", "Shift", "Item", "Start qty", "Time on board", "Received", "Fitted", "Old back", "To store", "Lost in hole", "End qty", "Item numbers"]];
   chron.forEach(s => { const b = balance(s); ITEMS.forEach(i => { const st = s.start?.[i] || {}; if (b[i].start || b[i].received || b[i].fitted || b[i].returned || b[i].back || b[i].lost || st.nos)
@@ -441,6 +478,13 @@ app.addEventListener("click", async e => {
     } finally { render(); }
     return;
   }
+  if (t.id === "newTrip") {
+    const tr = tripsOf(current); if (tr.length && !tr.at(-1).back) tr.at(-1).back = nowHM();
+    const nt = { id: newId(), out: nowHM(), back: "" }; tr.push(nt);
+    await save(`Trip ${tr.length} started`); render(); const sel = $("#mTrip"); if (sel) sel.value = nt.id; return;
+  }
+  if (t.dataset.tripback) { tripsOf(current)[+t.dataset.tripback].back = nowHM(); await save("Back at store " + nowHM()); render(); return; }
+  if (t.dataset.tripdel) { tripsOf(current).splice(+t.dataset.tripdel, 1); await save("Trip removed"); render(); return; }
   if (t.id === "keepExported") { lastExport = null; render(); return; }
   if (t.id === "clearExported") {
     const list = clearable();
@@ -475,7 +519,8 @@ app.addEventListener("click", async e => {
   }
   if (t.id === "close") {
     if (!current.signOperator || !current.signSupervisor) { $("#closeMsg").textContent = "Type the GET operator and supervisor names before closing the shift."; return; }
-    current.timeBack = current.timeBack || nowHM(); current.closed = true; await save("Shift closed"); render(); return;
+    const tr = tripsOf(current); if (tr.length && !tr.at(-1).back) tr.at(-1).back = nowHM();
+    current.closed = true; await save("Shift closed"); render(); return;
   }
   if (t.id === "reopen") { current.closed = false; await save("Shift reopened"); render(); }
 });
@@ -506,7 +551,7 @@ app.addEventListener("submit", async e => {
   e.preventDefault();
   const type = $("#mType").value, qty = Number($("#mQty").value);
   if (!Number.isInteger(qty) || qty <= 0) { $("#moveErr").textContent = "Type the quantity as a whole number, for example 1."; return; }
-  const m = { id: newId(), type, item: $("#mItem").value, qty, time: $("#mTime").value || nowHM(), onBoard: $("#mOnBoard").value,
+  const m = { id: newId(), trip: $("#mTrip")?.value || "", type, item: $("#mItem").value, qty, time: $("#mTime").value || nowHM(), onBoard: $("#mOnBoard").value,
     rig: TYPES[type].rig ? $("#mRig").value : "", itemNo: $("#mNo").value.trim(), oldNo: $("#mOld").value.trim(), block: $("#mBlock").value.trim(), by: $("#mBy").value.trim() };
   if (type === "fitted" || type === "back") {
     const b = balance(current)[m.item];
