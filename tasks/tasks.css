@@ -61,6 +61,7 @@
 .none{color:var(--muted);font-size:13.5px;padding:6px 0}
 .cols2{display:grid;gap:18px}
 @media (min-width:860px){.cols2{grid-template-columns:1fr 1fr}}
+@media (min-width:1100px){.cols2{grid-template-columns:1fr 1fr 1fr}}
 .grid2{display:grid;gap:8px;grid-template-columns:1fr 1fr}
 .grid2 button{grid-column:1/-1}
 .list{display:flex;flex-direction:column;gap:6px;margin-top:10px}

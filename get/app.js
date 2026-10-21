@@ -108,7 +108,7 @@ function newShift() {
   const start = {}, rigs = {};
   ITEMS.forEach(i => start[i] = { qty: pb && pb[i].end ? String(pb[i].end) : "", time: "", nos: prev?.start?.[i]?.nos || "" });
   RIGS.forEach(r => rigs[r] = prev?.rigs?.[r] ? { ...prev.rigs[r], time: "" } : { bits: "", bitNo: "", rods: "", shanks: "", shankNo: "", time: "" });
-  return { id: newId(), date: isoDate(d), shift: night ? "Night" : "Day", operator: prev?.operator || "", bakkie: prev?.bakkie || "", supervisor: "",
+  return { id: newId(), date: isoDate(d), shift: night ? "Night" : "Day", operator: opNow?.name || prev?.operator || "", bakkie: prev?.bakkie || "", supervisor: "",
     timeOut: nowHM(), timeBack: "", trips: [{ id: newId(), out: nowHM(), back: "" }], start, moves: [], rigs, comments: "",
     handover: { fromLabel: prev ? fmtDate(prev.date) + " " + prev.shift : "", handedBy: prev?.operator || "", takenBy: "", time: nowHM(), checked: "", notes: "" },
     signOperator: "", signSupervisor: "", signStore: "", closed: false, createdAt: Date.now() };
@@ -409,8 +409,8 @@ function buildWorkbook(list) {
     const mvs = (s.moves || []).filter(m => m.trip === tr.id);
     tp.push([fmtDate(s.date), s.shift, i + 1, tr.out, tr.back, mvs.length, ...ITEMS.map(it => mvs.filter(m => m.type === "received" && m.item === it).reduce((n, m) => n + (Number(m.qty) || 0), 0))]);
   }));
-  const mv = [["Date", "Shift", "Trip", "Time", "Time on board", "Movement", "Rig", "Item", "Qty", "Item no.", "Old item no. returned", "Block / hole", "Received by", "GET operator", "Bakkie no.", "Photos (in the Photos folder)"]];
-  rows.forEach(({ s, m }) => mv.push([fmtDate(s.date), s.shift, tripNo(s, m.trip), m.time, m.onBoard, TYPES[m.type]?.label || m.type, m.rig, m.item, Number(m.qty) || 0, m.itemNo, m.oldNo, m.block, m.by, s.operator, s.bakkie, photoNames(s, m).join(", ")]));
+  const mv = [["Date", "Shift", "Trip", "Time", "Time on board", "Movement", "Rig", "Item", "Qty", "Item no.", "Old item no. returned", "Block / hole", "Received by", "GET operator", "Bakkie no.", "Photos (in the Photos folder)", "Logged by"]];
+  rows.forEach(({ s, m }) => mv.push([fmtDate(s.date), s.shift, tripNo(s, m.trip), m.time, m.onBoard, TYPES[m.type]?.label || m.type, m.rig, m.item, Number(m.qty) || 0, m.itemNo, m.oldNo, m.block, m.by, s.operator, s.bakkie, photoNames(s, m).join(", "), m.loggedBy || ""]));
   const ws3 = XL.utils.aoa_to_sheet(mv); ws3["!cols"] = mv[0].map((h, i) => ({ wch: i === 15 ? 60 : i === 2 ? 6 : 16 }));
   XL.utils.book_append_sheet(wb, ws3, "Movements");
   const wsT = XL.utils.aoa_to_sheet(tp); wsT["!cols"] = tp[0].map((h, i) => ({ wch: i < 6 ? 14 : 24 }));
@@ -556,7 +556,7 @@ app.addEventListener("submit", async e => {
   e.preventDefault();
   const type = $("#mType").value, qty = Number($("#mQty").value);
   if (!Number.isInteger(qty) || qty <= 0) { $("#moveErr").textContent = "Type the quantity as a whole number, for example 1."; return; }
-  const m = { id: newId(), trip: $("#mTrip")?.value || "", type, item: $("#mItem").value, qty, time: $("#mTime").value || nowHM(), onBoard: $("#mOnBoard").value,
+  const m = { id: newId(), loggedBy: opNow?.name || "", trip: $("#mTrip")?.value || "", type, item: $("#mItem").value, qty, time: $("#mTime").value || nowHM(), onBoard: $("#mOnBoard").value,
     rig: TYPES[type].rig ? $("#mRig").value : "", itemNo: $("#mNo").value.trim(), oldNo: $("#mOld").value.trim(), block: $("#mBlock").value.trim(), by: $("#mBy").value.trim() };
   if (type === "fitted" || type === "back") {
     const b = balance(current)[m.item];
@@ -606,58 +606,143 @@ addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = 
 $("#installBtn").addEventListener("click", async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; $("#installBtn").hidden = true; });
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("../sw.js", { scope: "../", updateViaCache: "none" }).then(r => r.update()).catch(() => {}));
 
-/* ---------- PIN lock: the GET operator's PIN, kept on this tablet only (as a hash, never the PIN itself) ---------- */
+/* ---------- GET operator sign-in: own name + 4-digit PIN, approved by an app admin ----------
+   Firebase holds the operators list and the approvals (needs signal the first time on a tablet).
+   After that the tablet keeps a hash of the PIN, so the operator can unlock with no signal. */
 const LOCK_AFTER_MS = 10 * 60 * 1000;
-const ADMINS = ["muneer@tkroperations.com", "amogelang@tkroperations.com"];
 const FIREBASE_CONFIG = { apiKey: "AIzaSyALzOBLObrONGVD1bS0Tz02aNKhQ40TRoI", authDomain: "tkr-operations-app.firebaseapp.com", projectId: "tkr-operations-app", appId: "1:158080247079:web:7cb7786d2b7f9ee172b502" };
-let pinRec = null, unlocked = false, lastUse = Date.now(), lockMode = "enter";
+let fb = null, fbApp = null, fbAuth = null, fbDb = null;
+let ops = [], localOps = [], opNow = null, picked = null, unlocked = false, lastUse = Date.now(), lockMode = "pick";
+async function firebase() {
+  if (fbDb) return true;
+  try {
+    fb = await import("../lib/firebase.js");
+    fbApp = fb.initializeApp(FIREBASE_CONFIG, "get"); // separate sign-in from the Task Board
+    fbAuth = fb.getAuth(fbApp); fbDb = fb.initializeFirestore(fbApp, {});
+    return true;
+  } catch { return false; }
+}
+async function ensureSignedIn() {
+  await firebase(); await fbAuth.authStateReady?.();
+  if (!fbAuth.currentUser) await fb.signInAnonymously(fbAuth);
+}
+async function loadOps() {
+  if (!navigator.onLine) return false;
+  try { await ensureSignedIn(); const s = await fb.getDocs(fb.collection(fbDb, "getOperators")); ops = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((x, y) => x.name.localeCompare(y.name)); return true; }
+  catch { return false; }
+}
 async function hashPin(pin, salt) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(salt + ":" + pin));
   return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
-function showLock(mode, msg = "") {
-  lockMode = mode; unlocked = false; app.hidden = true; $("#lock").hidden = false;
-  const make = mode === "make";
-  $("#lTitle").textContent = mode === "admin" ? "Reset the GET PIN" : make ? "Make the GET operator's PIN" : "Enter the GET PIN";
-  $("#lHelp").textContent = mode === "admin" ? "Muneer or Amogelang: sign in with your app email and password. This needs signal." : make ? "Choose 4 numbers. Only the GET operator should know them. The app asks for this PIN each time it opens." : "Type the GET operator's 4-digit PIN.";
-  $("#lPinWrap").hidden = mode === "admin"; $("#lPin2Wrap").hidden = !make; $("#lAdminWrap").hidden = mode !== "admin";
-  $("#lForgot").hidden = mode !== "enter"; $("#lBack").hidden = mode !== "admin";
-  $("#lPin").value = ""; $("#lPin2").value = ""; $("#lErr").textContent = msg;
-  setTimeout(() => (mode === "admin" ? $("#lEmail") : $("#lPin")).focus(), 50);
+const opEmail = key => `get.${key}@staff.tkroperations.app`;
+const opPass = (pin, key) => `tkr-get-${pin}-${key}`;
+const randKey = () => [...crypto.getRandomValues(new Uint8Array(8))].map(b => b.toString(16).padStart(2, "0")).join("");
+async function saveLocal() { try { await store.putMeta({ id: "ops", list: localOps }); } catch {} }
+async function rememberOp(op, pin) {
+  const salt = randKey();
+  localOps = localOps.filter(o => o.uid !== op.id);
+  localOps.push({ uid: op.id, name: op.name, authEmail: op.authEmail, key: op.key, salt, hash: await hashPin(pin, salt), approved: !!op.approved });
+  await saveLocal();
 }
-function unlock() { unlocked = true; lastUse = Date.now(); $("#lock").hidden = true; app.hidden = false; render(); }
+function lockView(mode, msg = "") {
+  lockMode = mode; unlocked = false; app.hidden = true; $("#lock").hidden = false;
+  const el = $("#lockBody"), err = `<p class="flag" id="lErr" style="margin:0">${esc(msg)}</p>`;
+  const pinIn = (id, label) => `<label>${label} <input id="${id}" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off"></label>`;
+  if (mode === "pick") {
+    const names = new Map(); ops.forEach(o => names.set(o.id, o)); localOps.forEach(o => { if (!names.has(o.uid)) names.set(o.uid, { id: o.uid, name: o.name, approved: o.approved }); });
+    const list = [...names.values()].sort((x, y) => x.name.localeCompare(y.name));
+    el.innerHTML = `<h2>Who is using the GET log?</h2>
+      <p class="muted" style="margin:0">Choose your name and type your PIN.</p>
+      <div class="list" style="display:flex;flex-direction:column;gap:8px">${list.length ? list.map(o => `<button type="button" data-op="${esc(o.id)}" style="text-align:left">${esc(o.name)}${o.approved ? "" : ' <span class="muted">· waiting for approval</span>'}</button>`).join("")
+        : `<div class="muted">${navigator.onLine ? "No GET operators yet." : "No signal. The first sign-in on this tablet needs signal."}</div>`}</div>
+      ${err}<button type="button" class="primary" id="lNew">New GET operator? Register</button>`;
+  } else if (mode === "pin") {
+    el.innerHTML = `<h2>Hello ${esc(picked.name)}</h2><p class="muted" style="margin:0">Type your 4-digit PIN.</p>${pinIn("lPin", "PIN")}${err}
+      <button class="primary">Sign in</button>
+      <div class="row" style="justify-content:space-between"><button type="button" class="ghost" id="lSwitch">Not you?</button><button type="button" class="ghost" id="lForgot">Forgot your PIN?</button></div>`;
+  } else if (mode === "register") {
+    el.innerHTML = `<h2>Register as a GET operator</h2><p class="muted" style="margin:0">Type your full name and make a 4-digit PIN. Muneer or Amogelang then approve you. This needs signal.</p>
+      <label>Full name <input id="lName" maxlength="60" autocomplete="off"></label>${pinIn("lPin", "PIN")}${pinIn("lPin2", "Type the PIN again")}${err}
+      <button class="primary">Register</button><button type="button" class="ghost" id="lSwitch">Back</button>`;
+  } else if (mode === "wait") {
+    el.innerHTML = `<h2>Waiting for approval</h2><p style="margin:0">${esc(picked?.name || "")}, you are registered. Ask Muneer or Amogelang to approve you in the app (Daily Task Board, then Manage). Then tap Check again.</p>${err}
+      <button type="button" class="primary" id="lCheck">Check again</button><button type="button" class="ghost" id="lSwitch">Back</button>`;
+  } else if (mode === "forgot") {
+    el.innerHTML = `<h2>Forgot your PIN</h2><p style="margin:0">Ask Muneer or Amogelang to tap <b>Reset PIN</b> next to your name (Daily Task Board, then Manage). Then register again with your name and a new PIN, and they approve you. The GET records on the tablet stay.</p>
+      <button type="button" class="primary" id="lSwitch">OK</button>`;
+  }
+  setTimeout(() => el.querySelector("input")?.focus(), 50);
+}
+function unlock(op) {
+  opNow = { uid: op.uid || op.id, name: op.name }; unlocked = true; lastUse = Date.now();
+  $("#lock").hidden = true; app.hidden = false; $("#opName").textContent = opNow.name; $("#lockBtn").hidden = false; render();
+}
+async function checkStillApproved() {
+  // Online: a removed or unapproved operator is locked out the next time the tablet has signal.
+  if (!opNow || !navigator.onLine || !(await firebase())) return;
+  try {
+    await ensureSignedIn();
+    const d = await fb.getDoc(fb.doc(fbDb, "getOperators", opNow.uid));
+    const ok = d.exists() && d.data().approved;
+    const lo = localOps.find(o => o.uid === opNow.uid); if (lo) { lo.approved = !!ok; await saveLocal(); }
+    if (!ok) { if (saveTimer && current) await save(); opNow = null; lockView("pick", d.exists() ? "You are not approved yet." : "Your sign-in was removed. Register again."); }
+  } catch {}
+}
+$("#lockForm").addEventListener("click", async e => {
+  const t = e.target.closest("button"); if (!t || t.type === "submit") return;
+  if (t.dataset.op) { picked = ops.find(o => o.id === t.dataset.op) || (() => { const l = localOps.find(o => o.uid === t.dataset.op); return l && { id: l.uid, name: l.name, authEmail: l.authEmail, key: l.key, approved: l.approved }; })(); lockView("pin"); }
+  if (t.id === "lNew") lockView("register");
+  if (t.id === "lSwitch") { await loadOps(); lockView("pick"); }
+  if (t.id === "lForgot") lockView("forgot");
+  if (t.id === "lCheck") { await loadOps(); const o = ops.find(x => x.id === picked?.id); if (o?.approved) { lockView("pin", "You are approved. Type your PIN."); picked = o; } else $("#lErr").textContent = navigator.onLine ? "Not approved yet." : "No signal."; }
+});
 $("#lockForm").addEventListener("submit", async e => {
-  e.preventDefault(); const err = $("#lErr");
-  if (lockMode === "admin") {
-    err.textContent = "Checking…";
+  e.preventDefault(); const err = () => $("#lErr");
+  const pin = $("#lPin")?.value.trim() || "";
+  if (!/^\d{4}$/.test(pin)) { err().textContent = "The PIN must be 4 numbers."; return; }
+  if (lockMode === "register") {
+    const name = $("#lName").value.trim().replace(/\s+/g, " ");
+    if (name.length < 3) { err().textContent = "Type your full name."; return; }
+    if (pin !== $("#lPin2").value.trim()) { err().textContent = "The two PINs are not the same."; return; }
+    if (!navigator.onLine) { err().textContent = "No signal. Registering needs signal."; return; }
+    err().textContent = "Registering…";
     try {
-      const fb = await import("../lib/firebase.js");
-      const tmp = fb.initializeApp(FIREBASE_CONFIG, "get-reset-" + Date.now()), a = fb.getAuth(tmp);
-      const cred = await fb.signInWithEmailAndPassword(a, $("#lEmail").value.trim(), $("#lPass").value);
-      const ok = ADMINS.includes((cred.user.email || "").toLowerCase());
-      await fb.signOut(a).catch(() => {}); fb.deleteApp(tmp).catch(() => {});
-      $("#lPass").value = "";
-      if (!ok) { err.textContent = "Only Muneer or Amogelang can reset the PIN."; return; }
-      showLock("make", "Signed in. Now make the new PIN.");
-    } catch (x) { err.textContent = String(x?.code || "").includes("network") || !navigator.onLine ? "No signal. Resetting the PIN needs signal." : "Email or password is wrong."; }
+      await firebase(); const key = randKey(), em = opEmail(key);
+      const cred = await fb.createUserWithEmailAndPassword(fbAuth, em, opPass(pin, key));
+      const op = { name, authEmail: em, key, approved: false, createdAt: Date.now() };
+      await fb.setDoc(fb.doc(fbDb, "getOperators", cred.user.uid), op);
+      picked = { id: cred.user.uid, ...op }; await rememberOp(picked, pin); lockView("wait");
+    } catch (x) { err().textContent = "Registering didn't work. Check the signal and try again."; }
     return;
   }
-  const pin = $("#lPin").value.trim();
-  if (!/^\d{4}$/.test(pin)) { err.textContent = "The PIN must be 4 numbers."; return; }
-  if (lockMode === "make") {
-    if (pin !== $("#lPin2").value.trim()) { err.textContent = "The two PINs are not the same."; return; }
-    const salt = crypto.getRandomValues(new Uint32Array(2)).join("-");
-    pinRec = { id: "pin", salt, hash: await hashPin(pin, salt), setAt: Date.now() };
-    try { await store.putMeta(pinRec); } catch { err.textContent = "The PIN couldn't be saved on this device."; return; }
-    unlock(); return;
+  if (lockMode === "pin") {
+    const lo = localOps.find(o => o.uid === picked.id);
+    if (lo && lo.hash && (await hashPin(pin, lo.salt)) === lo.hash) {
+      if (!lo.approved && !navigator.onLine) { err().textContent = "You are not approved yet. Check again with signal."; return; }
+      if (lo.approved) { unlock(lo); checkStillApproved(); return; }
+    } else if (lo && lo.hash && !navigator.onLine) { $("#lPin").value = ""; err().textContent = "Wrong PIN."; return; }
+    if (!navigator.onLine) { err().textContent = "No signal. The first sign-in on this tablet needs signal."; return; }
+    err().textContent = "Signing in…";
+    try {
+      await firebase();
+      const src = ops.find(o => o.id === picked.id) || picked;
+      await fb.signInWithEmailAndPassword(fbAuth, src.authEmail, opPass(pin, src.key));
+      const d = await fb.getDoc(fb.doc(fbDb, "getOperators", picked.id));
+      if (!d.exists()) { err().textContent = "Your sign-in was removed. Register again."; return; }
+      const op = { id: d.id, ...d.data() }; await rememberOp(op, pin);
+      if (!op.approved) { picked = op; lockView("wait"); return; }
+      unlock(op);
+    } catch (x) {
+      const c = String(x?.code || "");
+      $("#lPin").value = "";
+      err().textContent = c.includes("too-many") ? "Too many tries. Wait a few minutes." : c.includes("network") ? "No signal. Try again with signal." : "Wrong PIN.";
+    }
   }
-  if ((await hashPin(pin, pinRec.salt)) === pinRec.hash) unlock(); else { $("#lPin").value = ""; err.textContent = "Wrong PIN."; }
 });
-$("#lForgot").onclick = () => showLock("admin");
-$("#lBack").onclick = () => showLock("enter");
-$("#lockBtn").onclick = async () => { if (saveTimer && current) await save(); showLock("enter"); };
+$("#lockBtn").onclick = async () => { if (saveTimer && current) await save(); picked = opNow ? { id: opNow.uid, name: opNow.name } : null; opNow = null; lockView(picked ? "pin" : "pick"); };
 ["pointerdown", "keydown", "input"].forEach(ev => document.addEventListener(ev, () => { if (unlocked) lastUse = Date.now(); }, { passive: true }));
-const checkIdle = async () => { if (unlocked && pinRec && Date.now() - lastUse > LOCK_AFTER_MS) { if (saveTimer && current) await save(); showLock("enter"); } };
+const checkIdle = async () => { if (unlocked && Date.now() - lastUse > LOCK_AFTER_MS) { if (saveTimer && current) await save(); picked = { id: opNow.uid, name: opNow.name }; opNow = null; lockView("pin", "Locked after 10 minutes. Type your PIN."); } };
 setInterval(checkIdle, 30000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) checkIdle(); });
 
@@ -665,7 +750,8 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) chec
   try {
     await store.open(); shifts = await store.all();
     if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
-    pinRec = await store.getMeta("pin");
-    showLock(pinRec ? "enter" : "make");
+    localOps = (await store.getMeta("ops"))?.list || [];
+    lockView("pick", navigator.onLine ? "" : "No signal. Choose your name to unlock.");
+    if (await loadOps()) lockView("pick");
   } catch { app.innerHTML = `<div class="card notice">This browser cannot save records. Open the app in Chrome.</div>`; }
 })();

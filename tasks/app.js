@@ -80,9 +80,10 @@ $("signForm").onsubmit = async e => {
 };
 
 /* ---------- live data ---------- */
-let started = false, unsubTeam = null, unsubRoles = null;
+let started = false, unsubTeam = null, unsubRoles = null, unsubOps = null, getOps = [];
 function start() {
-  if (unsubTeam) unsubTeam(); if (unsubRoles) unsubRoles();
+  if (unsubTeam) unsubTeam(); if (unsubRoles) unsubRoles(); if (unsubOps) { unsubOps(); unsubOps = null; }
+  if (isAdmin()) unsubOps = onSnapshot(collection(db, "getOperators"), s => { getOps = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.approved - b.approved) || a.name.localeCompare(b.name)); renderManage(); }, () => {});
   unsubRoles = onSnapshot(doc(db, "config", "roles"), s => { managers = ((s.exists() && s.data().managers) || []).map(x => String(x).toLowerCase()); renderAll(); }, () => {});
   unsubTeam = onSnapshot(collection(db, "team"), s => {
     team = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -203,6 +204,7 @@ function renderTeam(filter) {
 function renderManage() {
   if (!isAdmin()) return;
   $("teamList").innerHTML = team.length ? team.map(p => `<div class="it"><span>${esc(p.name)} <span class="muted">· ${p.uid ? "PIN set" : "no PIN yet"}</span></span><span class="row" style="gap:6px">${p.uid ? `<button data-resetpin="${esc(p.id)}">Reset PIN</button>` : ""}<button class="danger" data-rm="${esc(p.id)}">Remove</button></span></div>`).join("") : `<div class="muted">No employees yet.</div>`;
+  $("opList").innerHTML = getOps.length ? getOps.map(o => `<div class="it"><span>${esc(o.name)} <span class="muted">· ${o.approved ? "approved" : "waiting for approval"}</span></span><span class="row" style="gap:6px">${o.approved ? "" : `<button class="primary" data-opok="${esc(o.id)}">Approve</button>`}<button class="danger" data-opdel="${esc(o.id)}">${o.approved ? "Reset PIN / remove" : "Decline"}</button></span></div>`).join("") : `<div class="muted">No GET operators have registered yet.</div>`;
   $("mgrList").innerHTML = (managers.length ? managers : []).map(m => `<div class="it"><span>${esc(m)}</span><button class="danger" data-rmmgr="${esc(m)}">Remove</button></div>`).join("") || `<div class="muted">No managers added yet.</div>`;
 }
 
@@ -327,6 +329,8 @@ $("addPerson").onsubmit = e => {
 };
 $("manageBox").addEventListener("click", async e => {
   const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.opok) { updateDoc(doc(db, "getOperators", b.dataset.opok), { approved: true, approvedBy: email, approvedAt: Date.now() }).then(() => toast("Approved")).catch(fail); return; }
+  if (b.dataset.opdel) { const o = getOps.find(x => x.id === b.dataset.opdel); if (o && confirm(`Remove ${o.name}'s GET sign-in? They can register again with a new PIN.`)) deleteDoc(doc(db, "getOperators", o.id)).catch(fail); return; }
   if (b.dataset.resetpin) {
     const p = team.find(x => x.id === b.dataset.resetpin);
     if (p && confirm(`Reset ${p.name}'s PIN? Their tasks stay. Next time they choose their name, they make a new PIN.`))
