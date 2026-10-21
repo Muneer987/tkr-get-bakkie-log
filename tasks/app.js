@@ -332,7 +332,13 @@ $("addPerson").onsubmit = e => {
 };
 $("manageBox").addEventListener("click", async e => {
   const b = e.target.closest("button"); if (!b) return;
-  if (b.dataset.reqok) { updateDoc(doc(db, "getExportRequests", b.dataset.reqok), { status: "approved", approvedBy: email, approvedAt: Date.now() }).then(() => toast("Export approved")).catch(fail); return; }
+  if (b.dataset.reqok) {
+    const q = getReqs.find(x => x.id === b.dataset.reqok);
+    // The grant lets that operator read every operator's GET records for 24 hours, so their export is the combined report.
+    Promise.all([updateDoc(doc(db, "getExportRequests", b.dataset.reqok), { status: "approved", approvedBy: email, approvedAt: Date.now() }),
+      q ? setDoc(doc(db, "getExportGrants", q.opUid), { until: Date.now() + 24 * 3600e3, by: email }) : null]).then(() => toast("Export approved")).catch(fail);
+    return;
+  }
   if (b.dataset.reqno) { updateDoc(doc(db, "getExportRequests", b.dataset.reqno), { status: "declined", approvedBy: email, approvedAt: Date.now() }).catch(fail); return; }
   if (b.dataset.opok) { updateDoc(doc(db, "getOperators", b.dataset.opok), { approved: true, approvedBy: email, approvedAt: Date.now() }).then(() => toast("Approved")).catch(fail); return; }
   if (b.dataset.opdel) { const o = getOps.find(x => x.id === b.dataset.opdel); if (o && confirm(`Remove ${o.name}'s GET sign-in? They can register again with a new PIN.`)) deleteDoc(doc(db, "getOperators", o.id)).catch(fail); return; }
