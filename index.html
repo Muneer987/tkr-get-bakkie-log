@@ -17,7 +17,13 @@
   <button id="installBtn" class="install" hidden>Install app</button>
 </div></div>
 <div class="wrap"><div id="app"><div class="card empty"><b>Loading…</b></div></div></div>
+<input type="file" id="camera" accept="image/*" capture="environment" hidden>
+<div id="viewer" class="viewer" hidden>
+  <img id="viewerImg" alt="Photo">
+  <div class="row" style="justify-content:center"><button id="viewerDel" class="danger">Delete photo</button><button id="viewerClose" class="primary">Close</button></div>
+</div>
 <script src="xlsx.full.min.js"></script>
+<script src="jszip.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

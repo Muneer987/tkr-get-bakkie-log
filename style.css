@@ -66,4 +66,11 @@ td input{padding:7px 8px;font-size:15px;min-height:40px}
 .info{border:1px solid var(--gold);border-radius:8px;padding:10px 12px;font-size:14.5px;margin-bottom:12px}
 .datehead{font-family:var(--display);font-size:18px;margin:16px 0 8px;color:var(--muted)}
 .datehead:first-child{margin-top:0}
+.thumbs{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;align-items:center}
+.thumb{width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid var(--line);cursor:pointer;background:var(--panel)}
+.addph{min-height:40px;padding:6px 12px;font-size:14px;border-style:dashed}
+.viewer{position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.92);display:flex;flex-direction:column;gap:12px;align-items:center;justify-content:center;padding:16px}
+.viewer[hidden]{display:none}
+.viewer img{max-width:100%;max-height:80vh;border-radius:8px}
+.viewer .danger{background:#1a1a1a}
 .sticky{position:sticky;top:0;z-index:2;background:var(--bg);padding-block:8px;margin-top:-8px;margin-bottom:8px}

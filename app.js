@@ -27,24 +27,58 @@ const store = {
   db: null,
   open() {
     return new Promise((res, rej) => {
-      const r = indexedDB.open("tkr-get-bakkie-log", 1);
-      r.onupgradeneeded = () => r.result.createObjectStore("shifts", { keyPath: "id" });
+      const r = indexedDB.open("tkr-get-bakkie-log", 2);
+      r.onupgradeneeded = () => {
+        const db = r.result;
+        if (!db.objectStoreNames.contains("shifts")) db.createObjectStore("shifts", { keyPath: "id" });
+        if (!db.objectStoreNames.contains("photos")) db.createObjectStore("photos", { keyPath: "id" });
+      };
       r.onsuccess = () => { this.db = r.result; res(); };
       r.onerror = () => rej(r.error);
     });
   },
-  tx(mode, fn) {
+  tx(name, mode, fn) {
     return new Promise((res, rej) => {
-      const t = this.db.transaction("shifts", mode), os = t.objectStore("shifts");
+      const t = this.db.transaction(name, mode), os = t.objectStore(name);
       const out = fn(os);
       t.oncomplete = () => res(out && out.result !== undefined ? out.result : undefined);
       t.onerror = () => rej(t.error);
     });
   },
-  all() { return this.tx("readonly", os => os.getAll()); },
-  put(s) { return this.tx("readwrite", os => os.put(s)); },
-  del(id) { return this.tx("readwrite", os => os.delete(id)); },
+  all() { return this.tx("shifts", "readonly", os => os.getAll()); },
+  put(s) { return this.tx("shifts", "readwrite", os => os.put(s)); },
+  del(id) { return this.tx("shifts", "readwrite", os => os.delete(id)); },
+  photo(id) { return this.tx("photos", "readonly", os => os.get(id)); },
+  putPhoto(p) { return this.tx("photos", "readwrite", os => os.put(p)); },
+  delPhoto(id) { return this.tx("photos", "readwrite", os => os.delete(id)); },
 };
+
+/* ---------- photos: optional, shrunk to about 200 KB each so the tablet does not fill up ---------- */
+let draftPhotos = []; // photos taken in the add-movement form, not yet saved
+const photoURLs = new Map();
+async function shrinkPhoto(file) {
+  const bmp = await createImageBitmap(file);
+  const max = 1600, k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas"); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height); bmp.close?.();
+  return new Promise(res => c.toBlob(res, "image/jpeg", 0.75));
+}
+async function photoURL(id) {
+  if (photoURLs.has(id)) return photoURLs.get(id);
+  const p = await store.photo(id); if (!p) return "";
+  const u = URL.createObjectURL(p.blob); photoURLs.set(id, u); return u;
+}
+async function fillThumbs() {
+  for (const img of app.querySelectorAll("img[data-photo]")) { const u = await photoURL(img.dataset.photo); if (u) img.src = u; else img.remove(); }
+  for (const img of app.querySelectorAll("img[data-draft]")) img.src = draftPhotos[+img.dataset.draft]?.url || "";
+}
+async function deletePhotos(ids) { for (const id of ids || []) { await store.delPhoto(id); const u = photoURLs.get(id); if (u) URL.revokeObjectURL(u); photoURLs.delete(id); } }
+const safe = s => String(s || "").replace(/[^A-Za-z0-9-]+/g, "-").replace(/^-|-$/g, "");
+function photoNames(s, m) {
+  return (m.photos || []).map((id, n) => `${s.date}_${s.shift}_${(m.time || "").replace(":", "h")}_${safe(TYPES[m.type]?.label || m.type)}_${safe(m.item)}${m.itemNo ? "_" + safe(m.itemNo) : ""}_${n + 1}.jpg`);
+}
+function blobToDataURL(b) { return new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(b); }); }
+async function dataURLToBlob(u) { return (await fetch(u)).blob(); }
 
 let shifts = [], current = null, view = "shifts", statusMsg = "", saveTimer = null;
 const monthStart = new Date(); monthStart.setDate(1);
@@ -78,7 +112,12 @@ function newShift() {
 
 /* ---------- home ---------- */
 function render() {
-  if (current) return renderShift();
+  if (current) {
+    const keep = {}; app.querySelectorAll("#moveForm [id]").forEach(el => { if ("value" in el) keep[el.id] = el.value; });
+    renderShift();
+    Object.entries(keep).forEach(([id, v]) => { const el = document.getElementById(id); if (el && el.closest("#moveForm") && !el.disabled) el.value = v; });
+    toggleRig(); fillThumbs(); return;
+  }
   const tab = (k, t) => `<button role="tab" aria-selected="${view === k}" data-view="${k}">${t}</button>`;
   const dates = `<label style="flex:1 1 150px">From <input type="date" id="fFrom" value="${range.from}"></label>
       <label style="flex:1 1 150px">To <input type="date" id="fTo" value="${range.to}"></label>`;
@@ -86,7 +125,8 @@ function render() {
   if (view === "shifts") body = `<div class="row" style="margin-bottom:14px;align-items:flex-end">${dates}
       <button class="primary" id="newShift" style="flex:1 1 220px">Start shift / shift change</button></div>` + shiftList(inRange());
   else if (view === "log") body = `<div class="row" style="margin-bottom:14px;align-items:flex-end">${dates}
-      <button class="primary" id="xlsx" style="flex:1 1 220px">Export to Excel</button></div>` + logTable(inRange());
+      <button class="primary" id="xlsx" style="flex:1 1 200px">Export to Excel</button>
+      <button id="zip" style="flex:1 1 200px">Excel + photos (zip)</button></div>` + logTable(inRange());
   else body = backupView();
   app.innerHTML = `<div class="tabs" role="tablist">${tab("shifts", "Shifts")}${tab("log", "Movement log")}${tab("backup", "Backup")}</div>${body}`;
 }
@@ -116,10 +156,10 @@ function logTable(list) {
   const sum = {}; rows.forEach(({ m }) => { sum[m.type] = (sum[m.type] || 0) + (Number(m.qty) || 0); });
   return `<div class="card" style="padding:12px 16px"><div class="row" style="gap:18px">${Object.entries(TYPES).map(([k, t]) => `<span><span class="muted">${t.label}</span> <b class="num">${sum[k] || 0}</b></span>`).join("")}</div></div>
   <div class="card wide"><div class="tbl"><table>
-    <thead><tr><th>Date</th><th>Shift</th><th>Time</th><th>On board</th><th>Movement</th><th>Rig</th><th>Item</th><th class="num">Qty</th><th>Item no.</th><th>Old no. back</th><th>Block / hole</th><th>Received by</th><th>Operator</th></tr></thead>
+    <thead><tr><th>Date</th><th>Shift</th><th>Time</th><th>On board</th><th>Movement</th><th>Rig</th><th>Item</th><th class="num">Qty</th><th>Item no.</th><th>Old no. back</th><th>Block / hole</th><th>Received by</th><th>Operator</th><th class="num">Photos</th></tr></thead>
     <tbody>${rows.map(({ s, m }) => `<tr><td>${esc(fmtDate(s.date))}</td><td>${esc(s.shift)}</td><td class="num">${esc(m.time)}</td><td class="num">${esc(m.onBoard)}</td>
       <td class="${m.type === "lost" ? "flag" : ""}">${esc(TYPES[m.type]?.label || m.type)}</td><td>${esc(m.rig)}</td><td>${esc(m.item)}</td><td class="num">${esc(m.qty)}</td>
-      <td>${esc(m.itemNo)}</td><td>${esc(m.oldNo)}</td><td>${esc(m.block)}</td><td>${esc(m.by)}</td><td>${esc(s.operator)}</td></tr>`).join("")}</tbody></table></div></div>`;
+      <td>${esc(m.itemNo)}</td><td>${esc(m.oldNo)}</td><td>${esc(m.block)}</td><td>${esc(m.by)}</td><td>${esc(s.operator)}</td><td class="num">${(m.photos || []).length || ""}</td></tr>`).join("")}</tbody></table></div></div>`;
 }
 
 function backupView() {
@@ -154,8 +194,10 @@ function renderShift() {
   const moves = (s.moves || []).slice().sort((a, b) => (a.time || "").localeCompare(b.time || "")).map(m => {
     const t = TYPES[m.type] || TYPES.received;
     const detail = [m.onBoard && "on board " + m.onBoard, m.itemNo && "No. " + m.itemNo, m.oldNo && "old " + m.oldNo + " back", m.block && "block/hole " + m.block, m.by && "received by " + m.by].filter(Boolean).join(" · ");
+    const thumbs = (m.photos || []).map(id => `<img class="thumb" data-photo="${esc(id)}" data-move="${esc(m.id)}" alt="Photo">`).join("");
     return `<div class="move ${t.cls}"><span class="t">${esc(m.time)}</span>
-      <span class="what"><b>${esc(m.qty)} × ${esc(m.item)} – ${esc(t.label)}${t.rig && m.rig ? " – " + esc(m.rig) : ""}</b><span class="muted">${esc(detail)}</span></span>
+      <span class="what"><b>${esc(m.qty)} × ${esc(m.item)} – ${esc(t.label)}${t.rig && m.rig ? " – " + esc(m.rig) : ""}</b><span class="muted">${esc(detail)}</span>
+        ${thumbs || !ro ? `<span class="thumbs">${thumbs}${ro ? "" : `<button class="ghost addph" data-addphoto="${esc(m.id)}">+ Photo</button>`}</span>` : ""}</span>
       ${ro ? "" : `<button class="ghost" data-del="${esc(m.id)}">Remove</button>`}</div>`;
   }).join("") || `<div class="muted">No movements yet. Add one line every time GET goes on or off the bakkie.</div>`;
   const rigRows = RIGS.map(r => {
@@ -222,7 +264,12 @@ function renderShift() {
           <label>Old item no. back <input id="mOld" placeholder="Worn item no." ${off}></label>
           <label>Block / hole no. <input id="mBlock" placeholder="Block / hole" ${off}></label>
           <label>Received by <input id="mBy" placeholder="Name" ${off}></label>
-          <div style="grid-column:1/-1"><button class="primary" type="submit" style="width:100%" ${off}>Add movement</button></div>
+          <div style="grid-column:1/-1">
+            <span class="muted">Photos (optional), for example of the stock received from the store</span>
+            <div class="thumbs" style="margin-top:6px">${draftPhotos.map((p, i) => `<img class="thumb" data-draft="${i}" alt="New photo">`).join("")}
+              <button type="button" class="ghost addph" id="takePhoto" ${off}>Take photo</button></div>
+          </div>
+          <div style="grid-column:1/-1"><button class="primary" type="submit" style="width:100%" ${off}>Add movement${draftPhotos.length ? ` with ${draftPhotos.length} photo${draftPhotos.length === 1 ? "" : "s"}` : ""}</button></div>
         </form>
         <div id="moveErr" class="flag" style="margin-top:8px"></div>
       </section>
@@ -287,7 +334,7 @@ function buildWorkbook(list) {
   const sum = [
     ["TKR Operations – GET Bakkie Log"],
     ["Sum up from " + fmtDate(range.from) + " to " + fmtDate(range.to)],
-    ["Shifts logged", list.length, "", "Movements logged", rows.length],
+    ["Shifts logged", list.length, "", "Movements logged", rows.length, "Photos taken", rows.reduce((n, { m }) => n + (m.photos || []).length, 0)],
     [],
     ["Item", "Received from store", "Fitted on rigs", "Old items back from rigs", "Handed back to store", "Lost in hole", "In bakkie at end of last shift"],
     ...ITEMS.map(i => [i, t[i].received, t[i].fitted, t[i].returned, t[i].back, t[i].lost, lb ? lb[i].end : 0]),
@@ -307,9 +354,9 @@ function buildWorkbook(list) {
   const ws2 = XL.utils.aoa_to_sheet(sh); ws2["!cols"] = sh[0].map(() => ({ wch: 16 }));
   XL.utils.book_append_sheet(wb, ws2, "Shifts");
   // Movements
-  const mv = [["Date", "Shift", "Time", "Time on board", "Movement", "Rig", "Item", "Qty", "Item no.", "Old item no. returned", "Block / hole", "Received by", "GET operator", "Bakkie no."]];
-  rows.forEach(({ s, m }) => mv.push([fmtDate(s.date), s.shift, m.time, m.onBoard, TYPES[m.type]?.label || m.type, m.rig, m.item, Number(m.qty) || 0, m.itemNo, m.oldNo, m.block, m.by, s.operator, s.bakkie]));
-  const ws3 = XL.utils.aoa_to_sheet(mv); ws3["!cols"] = mv[0].map(() => ({ wch: 16 }));
+  const mv = [["Date", "Shift", "Time", "Time on board", "Movement", "Rig", "Item", "Qty", "Item no.", "Old item no. returned", "Block / hole", "Received by", "GET operator", "Bakkie no.", "Photos (in the Photos folder)"]];
+  rows.forEach(({ s, m }) => mv.push([fmtDate(s.date), s.shift, m.time, m.onBoard, TYPES[m.type]?.label || m.type, m.rig, m.item, Number(m.qty) || 0, m.itemNo, m.oldNo, m.block, m.by, s.operator, s.bakkie, photoNames(s, m).join(", ")]));
+  const ws3 = XL.utils.aoa_to_sheet(mv); ws3["!cols"] = mv[0].map((h, i) => ({ wch: i === 14 ? 60 : 16 }));
   XL.utils.book_append_sheet(wb, ws3, "Movements");
   // Bakkie and rig counts per shift
   const bk = [["Date", "Shift", "Item", "Start qty", "Time on board", "Received", "Fitted", "Old back", "To store", "Lost in hole", "End qty", "Item numbers"]];
@@ -337,35 +384,68 @@ async function shareOrDownload(blob, filename) {
 }
 
 /* ---------- events ---------- */
+let photoTarget = null, viewing = null;
+function clearDrafts() { draftPhotos.forEach(p => URL.revokeObjectURL(p.url)); draftPhotos = []; }
 app.addEventListener("click", async e => {
+  const img = e.target.closest("img.thumb");
+  if (img) {
+    viewing = img.dataset.photo ? { id: img.dataset.photo, move: img.dataset.move } : { draft: +img.dataset.draft };
+    $("#viewerImg").src = img.src; $("#viewerDel").hidden = !!current?.closed; $("#viewer").hidden = false; return;
+  }
   const t = e.target.closest("button"); if (!t) return;
   if (t.dataset.view) { view = t.dataset.view; render(); return; }
-  if (t.dataset.open) { current = structuredClone(shifts.find(x => x.id === t.dataset.open)); statusMsg = ""; render(); scrollTo(0, 0); return; }
-  if (t.id === "back") { if (saveTimer) await save(); current = null; render(); return; }
+  if (t.dataset.open) { clearDrafts(); current = structuredClone(shifts.find(x => x.id === t.dataset.open)); statusMsg = ""; render(); scrollTo(0, 0); return; }
+  if (t.id === "back") { if (saveTimer) await save(); clearDrafts(); current = null; render(); return; }
   if (t.id === "newShift") {
     const open = shifts.find(x => !x.closed);
     if (open && !confirm(`The ${fmtDate(open.date)} ${open.shift} shift is still open. Start the next shift anyway?`)) return;
     current = newShift(); await save("Shift started"); render(); scrollTo(0, 0); return;
   }
-  if (t.id === "xlsx") {
+  if (t.id === "xlsx" || t.id === "zip") {
     const list = inRange();
     if (!list.length) { alert("There are no shifts in these dates."); return; }
+    const name = `TKR_GET_Bakkie_Log_${fmtDate(range.from).replace(/\//g, "-")}_to_${fmtDate(range.to).replace(/\//g, "-")}`;
     const out = XLSX.write(buildWorkbook(list), { bookType: "xlsx", type: "array" });
-    const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    await shareOrDownload(blob, `TKR_GET_Bakkie_Log_${fmtDate(range.from).replace(/\//g, "-")}_to_${fmtDate(range.to).replace(/\//g, "-")}.xlsx`);
+    if (t.id === "xlsx") {
+      await shareOrDownload(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), name + ".xlsx");
+      return;
+    }
+    t.disabled = true; t.textContent = "Making zip…";
+    try {
+      const zip = new JSZip(); zip.file(name + ".xlsx", out);
+      const folder = zip.folder("Photos"); let n = 0;
+      for (const { s, m } of logRows(list)) {
+        const names = photoNames(s, m);
+        for (let i = 0; i < (m.photos || []).length; i++) { const p = await store.photo(m.photos[i]); if (p) { folder.file(names[i], p.blob); n++; } }
+      }
+      const blob = await zip.generateAsync({ type: "blob", mimeType: "application/zip" });
+      await shareOrDownload(blob, name + ".zip");
+      if (!n) alert("The zip has the Excel file only. No photos were taken in these dates.");
+    } finally { render(); }
     return;
   }
+  if (t.id === "takePhoto") { photoTarget = null; $("#camera").click(); return; }
+  if (t.dataset.addphoto) { photoTarget = t.dataset.addphoto; $("#camera").click(); return; }
   if (t.id === "backup") {
-    const blob = new Blob([JSON.stringify({ app: "tkr-get-bakkie-log", version: 1, made: new Date().toISOString(), shifts }, null, 1)], { type: "application/json" });
+    t.disabled = true; t.textContent = "Making backup…";
+    const photos = [];
+    for (const s of shifts) for (const m of s.moves || []) for (const id of m.photos || []) { const p = await store.photo(id); if (p) photos.push({ id, data: await blobToDataURL(p.blob) }); }
+    const blob = new Blob([JSON.stringify({ app: "tkr-get-bakkie-log", version: 2, made: new Date().toISOString(), shifts, photos })], { type: "application/json" });
     const r = await shareOrDownload(blob, `TKR_GET_Bakkie_Log_Backup_${fmtDate(isoDate(new Date())).replace(/\//g, "-")}.json`);
-    if (r !== "cancelled") { localSet("lastBackup", fmtDate(isoDate(new Date())) + " " + nowHM()); render(); }
-    return;
+    if (r !== "cancelled") localSet("lastBackup", fmtDate(isoDate(new Date())) + " " + nowHM());
+    render(); return;
   }
   if (t.id === "restoreBtn") { $("#restoreFile").click(); return; }
-  if (t.dataset.del) { current.moves = (current.moves || []).filter(m => m.id !== t.dataset.del); await save("Movement removed"); render(); return; }
+  if (t.dataset.del) {
+    const gone = (current.moves || []).find(m => m.id === t.dataset.del);
+    if (gone?.photos?.length && !confirm("Remove this movement and its photos?")) return;
+    current.moves = (current.moves || []).filter(m => m.id !== t.dataset.del);
+    await save("Movement removed"); await deletePhotos(gone?.photos); render(); return;
+  }
   if (t.id === "delShift") {
-    if (!confirm("Delete this whole shift and all its movements? This cannot be undone.")) return;
-    await store.del(current.id); shifts = shifts.filter(x => x.id !== current.id); current = null; render(); return;
+    if (!confirm("Delete this whole shift and all its movements and photos? This cannot be undone.")) return;
+    await store.del(current.id); await deletePhotos((current.moves || []).flatMap(m => m.photos || []));
+    shifts = shifts.filter(x => x.id !== current.id); clearDrafts(); current = null; render(); return;
   }
   if (t.id === "close") {
     if (!current.signOperator || !current.signSupervisor) { $("#closeMsg").textContent = "Type the GET operator and supervisor names before closing the shift."; return; }
@@ -384,6 +464,8 @@ app.addEventListener("change", async e => {
       if (data.app !== "tkr-get-bakkie-log" || !Array.isArray(data.shifts)) throw new Error();
       const have = new Set(shifts.map(s => s.id)), add = data.shifts.filter(s => s && s.id && !have.has(s.id));
       if (!confirm(`This backup has ${data.shifts.length} shifts. ${add.length} are not on this device yet and will be added. Shifts already here stay as they are. Continue?`)) return;
+      const need = new Set(add.flatMap(s => (s.moves || []).flatMap(m => m.photos || [])));
+      for (const p of data.photos || []) if (need.has(p.id)) await store.putPhoto({ id: p.id, blob: await dataURLToBlob(p.data) });
       for (const s of add) await store.put(s);
       shifts = await store.all(); render(); $("#backupMsg").textContent = add.length + " shifts restored.";
     } catch { $("#backupMsg").textContent = "That file is not a GET Bakkie Log backup."; }
@@ -404,8 +486,40 @@ app.addEventListener("submit", async e => {
     const b = balance(current)[m.item];
     if (qty > b.end) { $("#moveErr").textContent = `Only ${b.end} ${m.item.toLowerCase()} in the bakkie. Log what came from the store first.`; return; }
   }
+  if (draftPhotos.length) {
+    m.photos = [];
+    for (const p of draftPhotos) { const id = newId(); await store.putPhoto({ id, blob: p.blob }); m.photos.push(id); }
+    clearDrafts();
+  }
   current.moves = [...(current.moves || []), m];
+  e.target.reset();
   await save("Movement added " + m.time); render();
+});
+
+/* camera: one hidden input for the add form and for "+ Photo" on a saved movement */
+$("#camera").addEventListener("change", async e => {
+  const files = [...e.target.files]; e.target.value = "";
+  if (!files.length || !current) return;
+  setStatus("Saving photo…");
+  try {
+    const blobs = []; for (const f of files) blobs.push(await shrinkPhoto(f));
+    if (photoTarget) {
+      const m = (current.moves || []).find(x => x.id === photoTarget); if (!m) return;
+      m.photos = m.photos || [];
+      for (const b of blobs) { const id = newId(); await store.putPhoto({ id, blob: b }); m.photos.push(id); }
+      await save("Photo added");
+    } else {
+      blobs.forEach(b => draftPhotos.push({ blob: b, url: URL.createObjectURL(b) })); setStatus("Photo ready. Tap Add movement to save it.");
+    }
+    render();
+  } catch { setStatus("The photo could not be saved."); }
+});
+$("#viewerClose").addEventListener("click", () => { $("#viewer").hidden = true; viewing = null; });
+$("#viewerDel").addEventListener("click", async () => {
+  if (!viewing || !confirm("Delete this photo?")) return;
+  if (viewing.draft !== undefined) { const [p] = draftPhotos.splice(viewing.draft, 1); if (p) URL.revokeObjectURL(p.url); }
+  else { const m = (current.moves || []).find(x => x.id === viewing.move); if (m) { m.photos = (m.photos || []).filter(id => id !== viewing.id); await save("Photo deleted"); await deletePhotos([viewing.id]); } }
+  $("#viewer").hidden = true; viewing = null; render();
 });
 addEventListener("pagehide", () => { if (saveTimer && current) save(); });
 document.addEventListener("visibilitychange", () => { if (document.hidden && saveTimer && current) save(); });

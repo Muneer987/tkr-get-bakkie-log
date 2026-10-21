@@ -6,7 +6,9 @@ Offline tablet app for TKR Operations Drill Stores (Tharisa). The GET operator l
 - Shift change: last shift's bakkie and rig counts carry over as the new start
 - Every movement: received from store, fitted on rig, old item back, handed back to store, lost in hole, with time on board, item numbers and block/hole
 - Rig counts at end of shift and sign-off
+- Optional photos on any movement, for example stock received from the store
 - Export to Excel: Sum up, Shifts, Movements, Bakkie per shift, Rigs per shift
+- Excel + photos (zip): the Excel file and a Photos folder, each photo named by date, shift, time, movement and item
 - Works with no signal. Records are saved on the device only, so make a backup file every week (Backup tab)
 
 ## Install on a tablet or phone
