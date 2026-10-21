@@ -154,7 +154,7 @@ function render() {
   if (view === "shifts") body = `<div class="row" style="margin-bottom:14px;align-items:flex-end">${dates}
       <button class="primary" id="newShift" style="flex:1 1 220px">Start shift / shift change</button></div>` + shiftList(inRange());
   else if (view === "log") body = `<div class="row" style="margin-bottom:14px;align-items:flex-end">${dates}
-      ${canExport() ? `<button class="primary" id="xlsx" style="flex:1 1 200px">Combined report – all GET operators</button>` : ""}</div>` + syncLine() + exportGate() + clearCard() + logTable(inRange());
+      ${canExport() ? `<button class="primary" id="xlsx" style="flex:1 1 200px">Combined report – all GET operators (Excel, photos zipped)</button>` : ""}</div>` + syncLine() + exportGate() + clearCard() + logTable(inRange());
   else body = backupView();
   app.innerHTML = `<div class="tabs" role="tablist">${tab("shifts", "Shifts")}${tab("log", "Movement log")}${tab("backup", "Backup")}</div>${body}`;
 }
@@ -500,6 +500,18 @@ async function buildBrandedGET(list, who, photoBlob = async id => (await store.p
   return await wb.xlsx.writeBuffer();
 }
 
+
+/* The Excel shows every photo; when there are photos, the download is a zip with the Excel and a Photos folder. */
+async function packExport(out, list, photoBlob, base) {
+  const xlsx = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const items = []; logRows(list).forEach(({ s, m }) => { const names = photoNames(s, m); (m.photos || []).forEach((id, i) => items.push([id, names[i]])); });
+  if (!items.length) return { blob: xlsx, name: base + ".xlsx" };
+  await loadLib("../lib/jszip.min.js");
+  const zip = new JSZip(); zip.file(base + ".xlsx", xlsx); const folder = zip.folder("Photos");
+  for (const [id, name] of items) { const local = (await store.photo(id))?.blob; const b = local || await photoBlob(id); if (b) folder.file(name, b); }
+  return { blob: await zip.generateAsync({ type: "blob", mimeType: "application/zip" }), name: base + ".zip" };
+}
+
 /* ---------- who may export: an admin signs in on the tablet, or an admin approves the operator's request ---------- */
 let exportPass = null, exportReq = null, exportMsg = "", showAdminExport = false;
 const canExport = () => !!exportPass && Date.now() < exportPass.until;
@@ -589,8 +601,8 @@ app.addEventListener("click", async e => {
       const { list: all, photoBlob } = await combinedData(src);
       if (!all.length) { alert("There are no GET shifts online for these dates yet."); render(); return; }
       const out = await buildBrandedGET(all, exportPass.by + " · all GET operators", photoBlob);
-      const name = `TKR_GET_Bakkie_Log_${fmtDate(range.from).replace(/\//g, "-")}_to_${fmtDate(range.to).replace(/\//g, "-")}.xlsx`;
-      const r = await shareOrDownload(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), name);
+      const pk = await packExport(out, all, photoBlob, `TKR_GET_Bakkie_Log_All_Operators_${fmtDate(range.from).replace(/\//g, "-")}_to_${fmtDate(range.to).replace(/\//g, "-")}`);
+      const r = await shareOrDownload(pk.blob, pk.name);
       if (r !== "cancelled") lastExport = { ids: all.map(s => s.id), from: range.from, to: range.to, photos: true };
     } catch (x) { console.warn(x); alert("The Excel file couldn't be made. Try a shorter date range."); }
     render(); return;
@@ -904,7 +916,8 @@ $("#lockForm").addEventListener("submit", async e => {
       const { list, photoBlob } = await combinedData(fb.initializeFirestore(tmp, {}));
       if (!list.length) { err().textContent = "There are no GET shifts online for these dates yet."; return; }
       const out = await buildBrandedGET(list, em + " · all GET operators", photoBlob);
-      await shareOrDownload(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `TKR_GET_Bakkie_Log_All_Operators_${fmtDate(range.from).replace(/\//g, "-")}_to_${fmtDate(range.to).replace(/\//g, "-")}.xlsx`);
+      const pk = await packExport(out, list, photoBlob, `TKR_GET_Bakkie_Log_All_Operators_${fmtDate(range.from).replace(/\//g, "-")}_to_${fmtDate(range.to).replace(/\//g, "-")}`);
+      await shareOrDownload(pk.blob, pk.name);
       err().textContent = `Done: ${list.length} shift${list.length === 1 ? "" : "s"} from all GET operators.`;
     } catch (x) { console.warn(x); err().textContent = String(x?.code || "").includes("auth") ? "Email or password is wrong." : "The report couldn't be made. Check the signal and try again."; }
     finally { $("#laPass") && ($("#laPass").value = ""); if (tmp) { fb.getAuth(tmp).signOut?.(); fb.deleteApp(tmp).catch(() => {}); } }
