@@ -11,7 +11,11 @@ const TYPES = {
   returned: { label: "Old item back from rig", cls: "in", rig: true },
   back:     { label: "Handed back to store", cls: "out", rig: false },
   lost:     { label: "Lost in hole", cls: "lost", rig: true },
+  extra:    { label: "Extra", cls: "in", rig: false },
 };
+const PICK = ["received", "fitted", "back", "lost"];          // what the driver chooses from ("returned" stays for older records)
+const GET_ITEMS = ITEMS.filter(i => i !== "Other");          // anything else goes in Extras
+let addMode = "get";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = v => String(v ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -213,18 +217,18 @@ function field(path, value, attrs = "") { return `<input data-f="${path}" value=
 
 function renderShift() {
   const s = current, ro = s.closed, bal = balance(s), off = ro ? "disabled" : "", ho = s.handover || {};
-  const startRows = ITEMS.map(i => {
-    const b = bal[i], st = s.start?.[i] || {};
-    return `<tr><td><b>${i}</b></td>
-      <td style="width:76px">${field(`start.${i}.qty`, st.qty, 'inputmode="numeric" aria-label="Start qty"')}</td>
-      <td style="width:110px">${field(`start.${i}.time`, st.time, 'type="time" aria-label="Time on board"')}</td>
-      <td class="num">${b.received}</td><td class="num">${b.fitted}</td><td class="num">${b.returned}</td><td class="num">${b.back}</td>
-      <td class="num end">${b.end}</td>
-      <td style="min-width:170px">${field(`start.${i}.nos`, st.nos, 'aria-label="Item numbers" placeholder="Item numbers"')}</td></tr>`;
+  const startRows = ITEMS.filter(i => i !== "Other" || bal[i].start || bal[i].received || bal[i].fitted || bal[i].back).map(i => {
+    const b = bal[i];
+    return `<tr><td><b>${i}</b></td><td class="num">${b.start}</td><td class="num">${b.received}</td><td class="num">${b.fitted}</td><td class="num">${b.back}</td><td class="num">${b.lost}</td><td class="num end ${b.end < 0 ? "flag" : ""}">${b.end}</td></tr>`;
   }).join("");
+  const short = ITEMS.some(i => bal[i].end < 0);
   const moves = (s.moves || []).slice().sort((a, b) => (a.time || "").localeCompare(b.time || "")).map(m => {
     const t = TYPES[m.type] || TYPES.received;
     const tn = tripNo(s, m.trip);
+    if (m.type === "extra") return `<div class="move in"><span class="t">${esc(m.time)}</span>
+      <span class="what"><b>Extra: ${m.qty ? esc(m.qty) + " × " : ""}${esc(m.item)}</b><span class="muted">${tn ? "Trip " + tn : ""}</span>${m.note ? `<span class="muted" style="display:block;font-style:italic">Comment: ${esc(m.note)}</span>` : ""}
+        ${(m.photos || []).length || !ro ? `<span class="thumbs">${(m.photos || []).map(id => `<img class="thumb" data-photo="${esc(id)}" data-move="${esc(m.id)}" alt="Photo">`).join("")}${ro ? "" : `<button class="ghost addph" data-addphoto="${esc(m.id)}">+ Photo</button>`}</span>` : ""}</span>
+      ${ro ? "" : `<button class="ghost" data-del="${esc(m.id)}">Remove</button>`}</div>`;
     const detail = [tn && "Trip " + tn, m.onBoard && "on board " + m.onBoard, m.itemNo && "No. " + m.itemNo, m.oldNo && "old " + m.oldNo + " back", m.block && "block/hole " + m.block, m.by && "received by " + m.by].filter(Boolean).join(" · ");
     const note = m.note ? `<span class="muted" style="display:block;font-style:italic">Comment: ${esc(m.note)}</span>` : "";
     const thumbs = (m.photos || []).map(id => `<img class="thumb" data-photo="${esc(id)}" data-move="${esc(m.id)}" alt="Photo">`).join("");
@@ -232,16 +236,13 @@ function renderShift() {
       <span class="what"><b>${esc(m.qty)} × ${esc(m.item)} – ${esc(t.label)}${t.rig && m.rig ? " – " + esc(m.rig) : ""}</b><span class="muted">${esc(detail)}</span>${note}
         ${thumbs || !ro ? `<span class="thumbs">${thumbs}${ro ? "" : `<button class="ghost addph" data-addphoto="${esc(m.id)}">+ Photo</button>`}</span>` : ""}</span>
       ${ro ? "" : `<button class="ghost" data-del="${esc(m.id)}">Remove</button>`}</div>`;
-  }).join("") || `<div class="muted">No movements yet. Add one line every time GET goes on or off the bakkie.</div>`;
+  }).join("") || `<div class="muted">Nothing yet. Add a line every time GET goes on or off the bakkie, or for any extra.</div>`;
   const rigRows = RIGS.map(r => {
     const g = s.rigs?.[r] || {};
     return `<tr><td><b>${r}</b></td>
-      <td style="width:70px">${field(`rigs.${r}.bits`, g.bits, 'inputmode="numeric" aria-label="Bits on rig"')}</td>
-      <td>${field(`rigs.${r}.bitNo`, g.bitNo, 'aria-label="Bit no."')}</td>
-      <td style="width:70px">${field(`rigs.${r}.rods`, g.rods, 'inputmode="numeric" aria-label="Rods on rig"')}</td>
-      <td style="width:70px">${field(`rigs.${r}.shanks`, g.shanks, 'inputmode="numeric" aria-label="Shanks on rig"')}</td>
-      <td>${field(`rigs.${r}.shankNo`, g.shankNo, 'aria-label="Shank no."')}</td>
-      <td style="width:110px">${field(`rigs.${r}.time`, g.time, 'type="time" aria-label="Time on board"')}</td></tr>`;
+      <td>${field(`rigs.${r}.bits`, g.bits, 'inputmode="numeric" aria-label="Bits on rig"')}</td>
+      <td>${field(`rigs.${r}.rods`, g.rods, 'inputmode="numeric" aria-label="Rods on rig"')}</td>
+      <td>${field(`rigs.${r}.shanks`, g.shanks, 'inputmode="numeric" aria-label="Shanks on rig"')}</td></tr>`;
   }).join("");
   const lost = (s.moves || []).filter(m => m.type === "lost");
   const trips = tripsOf(s);
@@ -249,10 +250,9 @@ function renderShift() {
     const mv = (s.moves || []).filter(m => m.trip === tr.id);
     const loaded = mv.filter(m => m.type === "received").reduce((n, m) => n + (Number(m.qty) || 0), 0);
     return `<tr><td><b>Trip ${i + 1}</b></td>
-      <td style="width:130px">${field(`trips.${i}.out`, tr.out, 'type="time" aria-label="Time out of store"')}</td>
-      <td style="width:130px">${field(`trips.${i}.back`, tr.back, 'type="time" aria-label="Time back at store"')}</td>
-      <td class="num">${mv.length}</td><td class="num">${loaded}</td>
-      <td>${ro ? "" : (!tr.back ? `<button data-tripback="${i}">Back at store</button>` : "") + (!mv.length && trips.length > 1 ? ` <button class="ghost" data-tripdel="${i}">Remove</button>` : "")}</td></tr>`;
+      <td>${field(`trips.${i}.out`, tr.out, 'type="time" aria-label="Time out of store"')}</td>
+      <td>${field(`trips.${i}.back`, tr.back, 'type="time" aria-label="Time back at store"')}</td>
+      <td>${ro ? "" : (!tr.back ? `<button data-tripback="${i}">Back now</button>` : "") + (!mv.length && trips.length > 1 ? ` <button class="ghost" data-tripdel="${i}">Remove</button>` : "")}</td></tr>`;
   }).join("");
   app.innerHTML = `
     <div class="sticky row" style="justify-content:space-between">
@@ -266,79 +266,66 @@ function renderShift() {
         <label>Shift <select data-f="shift" ${off}>${["Day", "Night"].map(x => `<option ${s.shift === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>
         <label>GET operator ${field("operator", s.operator, 'placeholder="Name"')}</label>
         <label>Bakkie no. ${field("bakkie", s.bakkie, 'placeholder="Bakkie no."')}</label>
-        <label>Supervisor ${field("supervisor", s.supervisor, 'placeholder="Name"')}</label>
       </div>
     </section>
 
     <section class="card">
-      <h2>Shift change</h2>
-      ${ho.fromLabel ? `<div class="info">Start counts and rig counts were carried over from the <b>${esc(ho.fromLabel)}</b> shift. Count what is really in the bakkie and on the rigs, and change any number that is different.</div>`
-        : `<div class="info">First shift on the log. Count what is in the bakkie and on each rig and type it in.</div>`}
-      <div class="grid">
-        <label>Handed over by ${field("handover.handedBy", ho.handedBy, 'placeholder="Outgoing GET operator"')}</label>
-        <label>Taken over by ${field("handover.takenBy", ho.takenBy, 'placeholder="Incoming GET operator"')}</label>
-        <label>Handover time ${field("handover.time", ho.time, 'type="time"')}</label>
-        <label>Counts checked together? <select data-f="handover.checked" ${off}>${["", "Yes, counts match", "No, see notes"].map(x => `<option ${ho.checked === x ? "selected" : ""} value="${x}">${x || "Choose"}</option>`).join("")}</select></label>
-      </div>
-      <label style="margin-top:12px">Handover notes ${field("handover.notes", ho.notes, 'placeholder="Anything the next shift must know"')}</label>
-    </section>
-
-    <section class="card">
-      <h2>A. GET in the bakkie</h2>
-      <div class="tbl wide"><table>
-        <thead><tr><th>Item</th><th>Start qty</th><th>Time on board</th><th class="num">Received</th><th class="num">Fitted</th><th class="num">Old back</th><th class="num">To store</th><th class="num">In bakkie now</th><th>Item numbers</th></tr></thead>
+      <h2>GET in the bakkie</h2>
+      <div class="tbl mini"><table>
+        <thead><tr><th>Item</th><th class="num">Start</th><th class="num">Store</th><th class="num">Fitted</th><th class="num">Back</th><th class="num">Lost</th><th class="num">Now</th></tr></thead>
         <tbody>${startRows}</tbody></table></div>
-      <p class="muted" style="margin:8px 0 0">In bakkie now = start + received − fitted + old back − to store. It updates with every movement.</p>
+      <p class="muted" style="margin:8px 0 0">Start = left after the last shift. Store = from the store. Now = what should be in the bakkie. The app works it out from what you log.</p>${short ? `<p class="flag" style="margin:6px 0 0">Below 0 means more was fitted or sent back than came from the store. Check that everything from the store is logged.</p>` : ""}
     </section>
 
     <section class="card">
       <h2>Trips to the store</h2>
-      ${trips.length ? `<div class="tbl"><table>
-        <thead><tr><th>Trip</th><th>Time out of store</th><th>Time back at store</th><th class="num">Movements</th><th class="num">Loaded from store</th><th></th></tr></thead>
+      ${trips.length ? `<div class="tbl mini"><table>
+        <thead><tr><th>Trip</th><th>Out</th><th>Back</th><th></th></tr></thead>
         <tbody>${tripRows}</tbody></table></div>` : ""}
       <div class="row" style="margin-top:10px;justify-content:space-between">
-        <span class="muted">Every time the bakkie goes to the store, start a new trip. Movements in B go on the trip you choose.</span>
+        <span class="muted">Every time the bakkie goes to the store, start a new trip.</span>
         ${ro ? "" : `<button class="primary" id="newTrip">Start a new trip</button>`}
       </div>
     </section>
 
     <div class="cols">
       <section class="card">
-        <h2>B. Add a movement</h2>
+        <h2>Add</h2>
+        <div class="row" role="tablist" style="gap:8px;margin-bottom:12px">
+          <button type="button" class="${addMode === "get" ? "primary" : "ghost"}" data-mode="get" ${off}>GET</button>
+          <button type="button" class="${addMode === "extra" ? "primary" : "ghost"}" data-mode="extra" ${off}>Extras</button>
+        </div>
         <form id="moveForm" class="grid" autocomplete="off">
           ${trips.length ? `<label>Trip <select id="mTrip" ${off}>${trips.map((tr, i) => `<option value="${esc(tr.id)}" ${i === trips.length - 1 ? "selected" : ""}>Trip ${i + 1}</option>`).join("")}</select></label>` : ""}
-          <label>Movement <select id="mType" ${off}>${Object.entries(TYPES).map(([k, t]) => `<option value="${k}">${t.label}</option>`).join("")}</select></label>
+          ${addMode === "get" ? `
+          <label>What happened <select id="mType" ${off}>${PICK.map(k => `<option value="${k}">${TYPES[k].label}</option>`).join("")}</select></label>
           <label id="rigWrap">Rig <select id="mRig" ${off}>${RIGS.map(r => `<option>${r}</option>`).join("")}</select></label>
-          <label>Item <select id="mItem" ${off}>${ITEMS.map(i => `<option>${i}</option>`).join("")}</select></label>
-          <label>Qty <input id="mQty" inputmode="numeric" value="1" ${off}></label>
+          <label>Item <select id="mItem" ${off}>${GET_ITEMS.map(i => `<option>${i}</option>`).join("")}</select></label>
+          <label>Qty <input id="mQty" inputmode="numeric" value="1" ${off}></label>` : `
+          <label style="grid-column:1/-1">What is it <input id="mWhat" placeholder="For example 20 L hydraulic oil, hose, grease" ${off}></label>
+          <label>Qty (optional) <input id="mQty" inputmode="numeric" ${off}></label>`}
           <label>Time <input id="mTime" type="time" value="${nowHM()}" ${off}></label>
-          <label>Time on board <input id="mOnBoard" type="time" ${off}></label>
-          <label>Item no. <input id="mNo" placeholder="Item no." ${off}></label>
-          <label>Old item no. back <input id="mOld" placeholder="Worn item no." ${off}></label>
-          <label>Block / hole no. <input id="mBlock" placeholder="Block / hole" ${off}></label>
-          <label>Received by <input id="mBy" placeholder="Name" ${off}></label>
-          <label style="grid-column:1/-1">Comment (optional) <textarea id="mNote" rows="2" placeholder="Type anything, for example 20 L hydraulic oil to TDR 015" ${off}></textarea></label>
+          <label style="grid-column:1/-1">Comment (optional) <textarea id="mNote" rows="2" placeholder="Type anything" ${off}></textarea></label>
           <div style="grid-column:1/-1">
-            <span class="muted">Photos (optional), for example of the stock received from the store</span>
+            <span class="muted">Photo (optional)</span>
             <div class="thumbs" style="margin-top:6px">${draftPhotos.map((p, i) => `<img class="thumb" data-draft="${i}" alt="New photo">`).join("")}
               <button type="button" class="ghost addph" id="takePhoto" ${off}>Take photo</button></div>
           </div>
-          <div style="grid-column:1/-1"><button class="primary" type="submit" style="width:100%" ${off}>Add movement${draftPhotos.length ? ` with ${draftPhotos.length} photo${draftPhotos.length === 1 ? "" : "s"}` : ""}</button></div>
+          <div style="grid-column:1/-1"><button class="primary" type="submit" style="width:100%" ${off}>${addMode === "get" ? "Add GET" : "Add extra"}${draftPhotos.length ? ` with ${draftPhotos.length} photo${draftPhotos.length === 1 ? "" : "s"}` : ""}</button></div>
         </form>
         <div id="moveErr" class="flag" style="margin-top:8px"></div>
       </section>
       <section class="card">
-        <h2>Movements this shift</h2>
+        <h2>This shift</h2>
         <div class="moves">${moves}</div>
-        <h3>D. Lost in hole</h3>
-        <p class="muted" style="margin:0">${lost.length ? `${lost.length} line${lost.length === 1 ? "" : "s"} lost in hole. The supervisor signs at the bottom.` : "Nothing lost in hole. Choose “Lost in hole” as the movement if a bit or rod stays in the hole."}</p>
+
       </section>
     </div>
 
     <section class="card">
-      <h2>C. On each rig at end of shift</h2>
-      <div class="tbl wide"><table>
-        <thead><tr><th>Rig</th><th>Bits</th><th>Bit no.</th><th>Rods</th><th>Shanks</th><th>Shank no.</th><th>Time on board</th></tr></thead>
+      <h2>On each rig at end of shift</h2>
+      <div class="tbl"><table>
+        <thead><tr><th>Rig</th><th>Bits</th><th>Rods</th><th>Shanks</th></tr></thead>
         <tbody>${rigRows}</tbody></table></div>
     </section>
 
@@ -363,7 +350,7 @@ function renderShift() {
   toggleRig();
 }
 
-function toggleRig() { const t = $("#mType"); if (t) $("#rigWrap").hidden = !TYPES[t.value].rig; }
+function toggleRig() { const t = $("#mType"), w = $("#rigWrap"); if (t && w) w.hidden = !TYPES[t.value].rig; }
 function setStatus(m) { statusMsg = m; const el = $("#status"); if (el) el.textContent = m; }
 
 /* ---------- saving ---------- */
@@ -453,7 +440,7 @@ async function buildBrandedGET(list, who, photoBlob = async id => (await store.p
   r = 8; let k = 0; const photoList = [];
   for (const { s, m } of rows) {
     const ph = m.photos || [], names = photoNames(s, m);
-    const row = line(ws2, r, [fmtDate(s.date), s.shift, tripNo(s, m.trip) || "", m.time || "", m.onBoard || "", TYPES[m.type]?.label || m.type, m.rig || "", m.item, Number(m.qty) || 0, m.itemNo || "", m.oldNo || "", m.block || "", m.by || "", m.note || "", m.loggedBy || "", s.operator || "", "", "", ""], k++, { h: ph.length ? 60 : 20 });
+    const row = line(ws2, r, [fmtDate(s.date), s.shift, tripNo(s, m.trip) || "", m.time || "", m.onBoard || "", TYPES[m.type]?.label || m.type, m.rig || "", m.item, m.qty === "" ? "" : Number(m.qty) || 0, m.itemNo || "", m.oldNo || "", m.block || "", m.by || "", m.note || "", m.loggedBy || "", s.operator || "", "", "", ""], k++, { h: ph.length ? 60 : 20 });
     row.getCell(6).fill = fill(MOVE_FILL[m.type] || XC.CREAM); row.getCell(6).font = { name: "Arial", size: 10, bold: true };
     for (let i = 0; i < ph.length; i++) {
       const blob = await photoBlob(ph[i]); if (!blob) continue;
@@ -598,6 +585,7 @@ app.addEventListener("click", async e => {
   }
   const t = e.target.closest("button"); if (!t) return;
   if (t.dataset.view) { view = t.dataset.view; render(); return; }
+  if (t.dataset.mode && current) { addMode = t.dataset.mode; renderShift(); fillThumbs(); return; }
   if (t.dataset.open) { clearDrafts(); current = structuredClone(shifts.find(x => x.id === t.dataset.open)); statusMsg = ""; render(); scrollTo(0, 0); return; }
   if (t.id === "back") { if (saveTimer) await save(); clearDrafts(); current = null; render(); return; }
   if (t.id === "newShift") {
@@ -709,14 +697,19 @@ app.addEventListener("submit", async e => {
   }
   if (e.target.id !== "moveForm") return;
   e.preventDefault();
-  const type = $("#mType").value, qty = Number($("#mQty").value);
-  if (!Number.isInteger(qty) || qty <= 0) { $("#moveErr").textContent = "Type the quantity as a whole number, for example 1."; return; }
-  const m = { id: newId(), loggedBy: opNow?.name || "", trip: $("#mTrip")?.value || "", type, item: $("#mItem").value, qty, time: $("#mTime").value || nowHM(), onBoard: $("#mOnBoard").value,
-    rig: TYPES[type].rig ? $("#mRig").value : "", itemNo: $("#mNo").value.trim(), oldNo: $("#mOld").value.trim(), block: $("#mBlock").value.trim(), by: $("#mBy").value.trim(), note: ($("#mNote")?.value || "").trim() };
-  if (type === "fitted" || type === "back") {
-    const b = balance(current)[m.item];
-    if (qty > b.end) { $("#moveErr").textContent = `Only ${b.end} ${m.item.toLowerCase()} in the bakkie. Log what came from the store first.`; return; }
+  const err = $("#moveErr"), qtxt = $("#mQty").value.trim(), qty = Number(qtxt), base = { id: newId(), loggedBy: opNow?.name || "", trip: $("#mTrip")?.value || "", time: $("#mTime").value || nowHM(), note: ($("#mNote")?.value || "").trim() };
+  let m;
+  if (addMode === "extra") {
+    const what = $("#mWhat").value.trim();
+    if (!what) { err.textContent = "Type what it is, for example 20 L hydraulic oil."; return; }
+    if (qtxt && (!Number.isInteger(qty) || qty <= 0)) { err.textContent = "Type the quantity as a whole number, or leave it empty."; return; }
+    m = { ...base, type: "extra", item: what, qty: qtxt ? qty : "", rig: "" };
+  } else {
+    const type = $("#mType").value;
+    if (!Number.isInteger(qty) || qty <= 0) { err.textContent = "Type the quantity as a whole number, for example 1."; return; }
+    m = { ...base, type, item: $("#mItem").value, qty, rig: TYPES[type].rig ? $("#mRig").value : "" };
   }
+  err.textContent = "";
   if (draftPhotos.length) {
     m.photos = [];
     for (const p of draftPhotos) { const id = newId(); await store.putPhoto({ id, blob: p.blob }); m.photos.push(id); }
@@ -724,7 +717,7 @@ app.addEventListener("submit", async e => {
   }
   current.moves = [...(current.moves || []), m];
   e.target.reset();
-  await save("Movement added " + m.time); render();
+  await save((m.type === "extra" ? "Extra added " : "GET added ") + m.time); render();
 });
 
 /* camera: one hidden input for the add form and for "+ Photo" on a saved movement */

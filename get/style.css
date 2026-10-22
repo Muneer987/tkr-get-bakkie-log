@@ -76,3 +76,7 @@ td input{padding:7px 8px;font-size:15px;min-height:40px}
 .viewer img{max-width:100%;max-height:80vh;border-radius:8px}
 .viewer .danger{background:#1a1a1a}
 .sticky{position:sticky;top:0;z-index:2;background:var(--bg);padding-block:8px;margin-top:-8px;margin-bottom:8px}
+.mini th{letter-spacing:0;padding:6px 3px;font-size:10px}
+.mini td{padding:6px 3px}
+.mini td b{word-break:normal}
+.mini input[type=time]{min-width:0;width:100%;padding-left:6px;padding-right:4px}
