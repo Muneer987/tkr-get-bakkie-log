@@ -256,7 +256,13 @@ function viewPeople(){const list=filtered().sort((a,b)=>SHEETS.indexOf(a.sheet)-
   const gone=(S.emps||[]).filter(x=>x.active===false);
   if(gone.length)h+='<h2 class="sheet-h">Removed employees <small>'+gone.length+'</small></h2><div class="tbl-wrap"><table><thead><tr><th>Employee</th><th>Sheet</th><th>Reason</th><th>Last working day</th><th></th></tr></thead><tbody>'+
     gone.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+esc(x.sheet)+'</td><td>'+esc(x.leftReason||"")+'</td><td>'+(x.leftDate?nice(x.leftDate)+" "+yr(x.leftDate):"")+'</td><td><button class="btn sm" data-restore="'+esc(x.id)+'">Put back</button></td></tr>').join("")+'</tbody></table></div>';
+  if(isAdmin()&&(S.emps||[]).length)h+='<div class="list" style="margin-top:18px"><h3>Remove all employees</h3><p class="note" style="margin:0 0 8px">Clears the whole employee list ('+(S.emps||[]).length+' people, including removed ones) so you can add your own. A copy of the data file downloads first, so you can load it back under Users if you need it. Marks already saved are not deleted.</p><button class="btn" id="clearEmps" style="border-color:var(--bad);color:var(--bad)">Remove all employees</button></div>';
   main.innerHTML=h;
+  const ce=$("clearEmps");if(ce)ce.onclick=async()=>{const n=(S.emps||[]).length;
+    if(!confirm("Remove all "+n+" employees from TKR Attendance? A copy of the data file downloads first."))return;
+    if(prompt('Type REMOVE to confirm')!=="REMOVE"){toast("Nothing removed");return}
+    try{await saveBackup()}catch(e){toast("The copy could not be made, so nothing was removed");return}
+    await saveEmps([]);toast("All employees removed. Add your own on this tab.")};
 }
 async function saveEmps(list){if(!S.canWrite){toast("You can view this register but not change it.");return}
   try{await S.db.doc("config/employees").set({list,groups:S.groupDefs||[]});S.emps=list;render()}catch(e){if(denied(e)){S.canWrite=false;toast("You can view this register but not change it.")}else toast("Not saved: "+(e.message||"try again"))}}
