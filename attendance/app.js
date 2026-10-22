@@ -155,7 +155,7 @@ function viewMark(){
   if(!list.length)h+='<div class="empty"><b>No match</b>Nobody on this sheet matches the search.</div>';
   groups.forEach(s=>{h+='<h2 class="sheet-h">'+esc(s.sheet)+' <small>'+nice(S.date)+'</small></h2>';
     s.groups.forEach(g=>{const r=rotaFor(g.id,S.date);
-      h+='<section class="group"><div class="ghead"><span class="gname">'+esc(g.label)+'</span>'+(r?'<span class="rota '+esc(r)+'">'+esc(r)+'</span>':"")+
+      h+='<section class="group"><div class="ghead"><span class="gname">'+esc(g.label)+'</span>'+(S.canWrite?'<button type="button" class="rota rbtn '+esc(r)+'" data-rota="'+esc(g.id)+'" aria-label="Change the rota for '+esc(g.label)+' on '+nice(S.date)+'">'+esc(r||"Set rota")+'</button>':(r?'<span class="rota '+esc(r)+'">'+esc(r)+'</span>':""))+
       '<button class="btn sm" data-fill="'+esc(g.id)+'" data-val="P">Unmarked → P</button><button class="btn sm" data-fill="'+esc(g.id)+'" data-val="OFF">Unmarked → OFF</button></div>';
       g.emps.forEach(e=>{h+='<button class="row" data-emp="'+esc(e.id)+'"><span class="who"><span class="n">'+esc(e.name)+'</span><br><span class="t">'+esc([e.number,e.title].filter(Boolean).join(" · "))+'</span></span>'+flagBadges(e,cd)+(otOf(e,S.date)?'<span class="otb">+'+fmtH(otOf(e,S.date))+'h OT</span>':'')+pill(markOf(e,S.date))+'</button>'});
       h+='</section>'})});
@@ -215,6 +215,36 @@ function orderFor(gid,sheet,list,skip){const same=list.filter(x=>x.group===gid&&
   const sh=list.filter(x=>x.sheet===sheet&&x.id!==skip);return (sh.length?Math.max(...sh.map(x=>x.order)):list.length)+1}
 const gName=g=>groupLabel({sheet:g.sheet,section:g.section,shift:g.shift});
 let editingGroup=null;
+// ---------- editing rotas: one day from the Mark tab, or the whole cycle from Shift groups ----------
+function groupMeta(gid){const g=allGroups().find(x=>x.id===gid)||S.gmeta[gid]||{};return {sheet:g.sheet||"",section:g.section||"",shift:g.shift||""}}
+async function saveRota(gid,days){if(!S.canWrite){toast("You can view this register but not change it.");return false}
+  const by={};for(const d in days){const c=cycleOf(d);(by[c.start]=by[c.start]||{c,rota:{}}).rota[d]=days[d]}
+  try{for(const k in by){const {c,rota}=by[k];await S.db.doc("cycles/r-"+c.start).update({start:c.start,end:c.end,groups:{[gid]:Object.assign(groupMeta(gid),{rota})}})}
+    S.rota[gid]=Object.assign(S.rota[gid]||{},days);return true}
+  catch(e){toast(denied(e)?"You can view this register but not change it.":"Not saved: "+(e.message||"try again"));return false}}
+function openRotaDay(gid){const g=allGroups().find(x=>x.id===gid);if(!g)return;const cur=rotaFor(gid,S.date);
+  $("sheetHost").innerHTML='<div class="scrim" id="scrim"><div class="panel" role="dialog" aria-modal="true" aria-labelledby="rdt"><h2 id="rdt">'+esc(g.sheet+" · "+gName(g))+'</h2><div class="sub">Rota for '+nice(S.date)+' '+yr(S.date)+'</div>'+
+   '<div class="codes" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0">'+["DAY","NIGHT","OFF"].map(v=>'<button class="btn'+(cur===v?" gold":"")+'" data-rv="'+v+'">'+v+'</button>').join("")+'</div>'+
+   '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-rv="">Clear</button><button class="btn" id="rotaCycle">Edit the whole cycle</button><button class="btn" id="closeP">Close</button></div></div></div>';
+  const close=()=>{$("sheetHost").innerHTML=""};$("closeP").onclick=close;$("scrim").onclick=ev=>{if(ev.target.id==="scrim")close()};
+  $("rotaCycle").onclick=()=>openRotaCycle(gid);
+  $("sheetHost").querySelectorAll("[data-rv]").forEach(b=>b.onclick=async()=>{close();if(await saveRota(gid,{[S.date]:b.dataset.rv})){toast(gName(g)+" "+(b.dataset.rv||"rota cleared")+" on "+short(S.date));render()}})}
+function openRotaCycle(gid){const g=allGroups().find(x=>x.id===gid);if(!g)return;const c=cycleOf(S.date);const sel={};c.dates.forEach(d=>sel[d]=rotaFor(gid,d));
+  const opt=(d)=>'<select data-rd="'+d+'">'+["","DAY","NIGHT","OFF"].map(v=>'<option value="'+v+'"'+(sel[d]===v?" selected":"")+'>'+(v||"–")+'</option>').join("")+'</select>';
+  $("sheetHost").innerHTML='<div class="scrim" id="scrim"><div class="panel" role="dialog" aria-modal="true" aria-labelledby="rct" style="max-height:90vh;overflow:auto"><h2 id="rct">'+esc(g.sheet+" · "+gName(g))+'</h2><div class="sub">Rota for '+short(c.start)+' – '+short(c.end)+' '+yr(c.end)+'</div>'+
+   '<p class="note" style="margin:8px 0">Fill a pattern from a start date, or change single days below.</p>'+
+   '<div class="clock" style="flex-wrap:wrap"><label class="lbl" for="rp-from" style="margin:0">From</label><input type="date" id="rp-from" value="'+c.start+'" min="'+c.start+'" max="'+c.end+'">'+
+   '<label class="lbl" for="rp-pat" style="margin:0">Pattern</label><input id="rp-pat" placeholder="e.g. 2 DAY, 3 NIGHT, 3 OFF" style="min-width:200px"><button class="btn" id="rpFill">Fill</button></div>'+
+   '<div class="tbl-wrap" style="margin-top:10px"><table><tbody>'+c.dates.map(d=>'<tr><td>'+nice(d)+'</td><td>'+opt(d)+'</td></tr>').join("")+'</tbody></table></div>'+
+   '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn gold" id="rcSave">Save rota</button><button class="btn" id="closeP">Cancel</button></div></div></div>';
+  const host=$("sheetHost"),close=()=>{host.innerHTML=""};$("closeP").onclick=close;$("scrim").onclick=ev=>{if(ev.target.id==="scrim")close()};
+  $("rpFill").onclick=()=>{const seq=[];const parts=$("rp-pat").value.toUpperCase().split(/[,;]+/).map(x=>x.trim()).filter(Boolean);
+    for(const p of parts){const m=p.match(/^(\d+)\s*(?:X\s*)?(DAY|NIGHT|OFF)S?$/)||p.match(/^(DAY|NIGHT|OFF)S?\s*(?:X\s*)?(\d+)$/);
+      if(!m){toast("Write the pattern like 2 DAY, 3 NIGHT, 3 OFF");return}const n=+(m[1].match(/\d/)?m[1]:m[2]),v=m[1].match(/\d/)?m[2]:m[1];if(n<1||n>31){toast("Use 1 to 31 days in each part");return}for(let i=0;i<n;i++)seq.push(v)}
+    if(!seq.length){toast("Type a pattern first");return}const from=$("rp-from").value||c.start;let i=0;
+    c.dates.filter(d=>d>=from).forEach(d=>{const v=seq[i++%seq.length];host.querySelector('[data-rd="'+d+'"]').value=v});toast("Pattern filled. Check it, then tap Save rota")};
+  $("rcSave").onclick=async()=>{const days={};host.querySelectorAll("[data-rd]").forEach(el=>{if(el.value!==sel[el.dataset.rd])days[el.dataset.rd]=el.value});
+    if(!Object.keys(days).length){close();toast("No changes");return}close();if(await saveRota(gid,days)){toast("Rota saved for "+gName(g)+" ("+Object.keys(days).length+" day"+(Object.keys(days).length===1?"":"s")+")");render()}}}
 function viewGroups(){const gs=allGroups().filter(g=>S.sheet==="All"||g.sheet===S.sheet);const eg=editingGroup||{};const w=S.canWrite;
   let h=w?'<form class="form" id="grpForm"><label>Sheet<select id="g-sheet" '+(editingGroup?"disabled":"")+'>'+SHEETS.map(x=>'<option'+((eg.sheet||(S.sheet!=="All"?S.sheet:""))===x?" selected":"")+'>'+esc(x)+'</option>').join("")+'</select></label>'+
    '<label>Section (optional)<input id="g-section" placeholder="For example Pit" value="'+esc(eg.section&&eg.section!==eg.sheet?eg.section:"")+'"></label>'+
@@ -224,7 +254,7 @@ function viewGroups(){const gs=allGroups().filter(g=>S.sheet==="All"||g.sheet===
   if(!gs.length)h+='<div class="empty"><b>No shift groups yet</b>Add a group above, then put employees in it.</div>';
   gs.forEach(g=>{const mem=activeEmps().filter(x=>x.group===g.id).sort((a,b)=>a.order-b.order);const others=allGroups().filter(o=>o.sheet===g.sheet&&o.id!==g.id);
     h+='<section class="group"><div class="ghead"><span class="gname">'+esc(g.sheet+" · "+gName(g))+'</span><span class="note">'+mem.length+' '+(mem.length===1?"person":"people")+'</span>'+
-     (w?'<span style="margin-left:auto;display:flex;gap:6px"><button class="btn sm" data-grename="'+esc(g.id)+'">Rename</button><button class="btn sm" data-gremove="'+esc(g.id)+'">Remove</button></span>':"")+'</div>';
+     (w?'<span style="margin-left:auto;display:flex;gap:6px"><button class="btn sm" data-grota="'+esc(g.id)+'">Edit rota</button><button class="btn sm" data-grename="'+esc(g.id)+'">Rename</button><button class="btn sm" data-gremove="'+esc(g.id)+'">Remove</button></span>':"")+'</div>';
     h+=mem.length?'<div class="tbl-wrap"><table><tbody>'+mem.map(x=>'<tr><td>'+esc(x.name)+'<br><span class="note">'+esc([x.number,x.title].filter(Boolean).join(" · "))+'</span></td><td style="width:1%;white-space:nowrap">'+
       (w&&others.length?'<label class="note" style="display:block">Move to<select data-gmove="'+esc(x.id)+'"><option value="">Choose group</option>'+others.map(o=>'<option value="'+esc(o.id)+'">'+esc(gName(o))+'</option>').join("")+'</select></label>':"")+'</td></tr>').join("")+'</tbody></table></div>'
       :'<p class="note" style="margin:8px 0">Nobody in this group yet. Move people here from another group, or add a new employee to it on the Employees tab.</p>';
@@ -240,6 +270,7 @@ function viewGroups(){const gs=allGroups().filter(g=>S.sheet==="All"||g.sheet===
     S.groupDefs=(S.groupDefs||[]).concat([{id:sheet+"|"+sec+"|"+shift+"|"+Date.now().toString(36),sheet,section:sec,shift}]);
     saveEmps(S.emps||[]).then(()=>toast(gName({sheet,section:sec,shift})+" added to "+sheet))};
   const c=$("cancelGrp");if(c)c.onclick=()=>{editingGroup=null;render()};
+  main.querySelectorAll("[data-grota]").forEach(b=>b.onclick=()=>openRotaCycle(b.dataset.grota));
   main.querySelectorAll("[data-grename]").forEach(b=>b.onclick=()=>{editingGroup=allGroups().find(x=>x.id===b.dataset.grename);render();window.scrollTo({top:0})});
   main.querySelectorAll("[data-gremove]").forEach(b=>b.onclick=()=>{const g=allGroups().find(x=>x.id===b.dataset.gremove);const n=activeEmps().filter(x=>x.group===g.id).length;
     if(n){toast("Move the "+n+" "+(n===1?"person":"people")+" in "+gName(g)+" to another group first");return}
@@ -548,6 +579,7 @@ main.addEventListener("change",ev=>{if((ev.target.id==="flg-from"||ev.target.id=
   if(ev.target.id==="f-sheet"){const sh=ev.target.value;const sel=$("f-group");const opt=[...sel.options].find(o=>o.dataset.sheet===sh);if(opt)sel.value=opt.value}});
 main.addEventListener("click",ev=>{const t=ev.target.closest("button");if(!t)return;
   if(t.dataset.sheet){S.sheet=t.dataset.sheet;try{localStorage.setItem("tkr-att-sheet",S.sheet)}catch(e){}render();return}
+  if(t.dataset.rota!==undefined){openRotaDay(t.dataset.rota);return}
   if(t.dataset.emp){const e=activeEmps().find(x=>x.id===t.dataset.emp);if(e)openPanel(e);return}
   if(t.dataset.fill){if(!S.canWrite){toast("You can view this register but not mark it.");return}
     const es=filtered().filter(e=>e.group===t.dataset.fill&&!markOf(e,S.date));if(!es.length){toast("Everyone in this group is already marked");return}
