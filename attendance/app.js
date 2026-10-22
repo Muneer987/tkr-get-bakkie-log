@@ -256,14 +256,42 @@ function viewPeople(){const list=filtered().sort((a,b)=>SHEETS.indexOf(a.sheet)-
   const gone=(S.emps||[]).filter(x=>x.active===false);
   if(gone.length)h+='<h2 class="sheet-h">Removed employees <small>'+gone.length+'</small></h2><div class="tbl-wrap"><table><thead><tr><th>Employee</th><th>Sheet</th><th>Reason</th><th>Last working day</th><th></th></tr></thead><tbody>'+
     gone.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+esc(x.sheet)+'</td><td>'+esc(x.leftReason||"")+'</td><td>'+(x.leftDate?nice(x.leftDate)+" "+yr(x.leftDate):"")+'</td><td><button class="btn sm" data-restore="'+esc(x.id)+'">Put back</button></td></tr>').join("")+'</tbody></table></div>';
+  if(S.canWrite)h+='<div class="list" style="margin-top:18px"><h3>Add employees from Excel</h3><p class="note" style="margin:0 0 8px">Pick an Excel list with the columns Employee, Number, Job Title and Department. People already on the register (same employee number) are skipped. Department decides the sheet: Rompad, Drilling and Shared Services go to their own sheet; Buses, Water Bowsers, Low Beds and TLB go to Support Fleet; Corporate goes to Shared Services. Each department becomes a shift group.</p><button class="btn gold" id="impEmps">Choose Excel file</button><input type="file" id="impFile" accept=".xlsx,.xls,.xlsb,.csv" hidden><p class="note" id="impMsg" role="status">'+esc(impNote)+'</p></div>';
   if(isAdmin()&&(S.emps||[]).length)h+='<div class="list" style="margin-top:18px"><h3>Remove all employees</h3><p class="note" style="margin:0 0 8px">Clears the whole employee list ('+(S.emps||[]).length+' people, including removed ones) so you can add your own. A copy of the data file downloads first, so you can load it back under Users if you need it. Marks already saved are not deleted.</p><button class="btn" id="clearEmps" style="border-color:var(--bad);color:var(--bad)">Remove all employees</button></div>';
   main.innerHTML=h;
+  const ib=$("impEmps");if(ib){ib.onclick=()=>$("impFile").click();$("impFile").onchange=ev=>{const f=ev.target.files[0];ev.target.value="";if(f)importEmps(f)}}
   const ce=$("clearEmps");if(ce)ce.onclick=async()=>{const n=(S.emps||[]).length;
     if(!confirm("Remove all "+n+" employees from TKR Attendance? A copy of the data file downloads first."))return;
     if(prompt('Type REMOVE to confirm')!=="REMOVE"){toast("Nothing removed");return}
     try{await saveBackup()}catch(e){toast("The copy could not be made, so nothing was removed");return}
     await saveEmps([]);toast("All employees removed. Add your own on this tab.")};
 }
+// Add employees from an Excel list (Employee, Number, Job Title, Department). Skips numbers already on the register.
+const DEPT_SHEET={"rompad":"Rompad","drilling":"Drilling","shared services":"Shared Services","interns":"Interns","support fleet":"Support Fleet","corporate":"Shared Services",
+  "buses":"Support Fleet","bus":"Support Fleet","water bowsers":"Support Fleet","water bowser":"Support Fleet","low beds":"Support Fleet","lowbeds":"Support Fleet","low bed":"Support Fleet","tlb":"Support Fleet"};
+let impNote="";
+async function importEmps(file){const say=t=>{impNote=t;const m=$("impMsg");if(m)m.textContent=t};say("Reading "+file.name+"…");
+  try{if(!window.XLSX)throw new Error("The Excel reader has not loaded yet. Try again.");
+    const wb=XLSX.read(await file.arrayBuffer(),{type:"array"});const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:""});
+    const hi=rows.findIndex(r=>r.some(c=>String(c).trim().toLowerCase()==="employee")&&r.some(c=>String(c).trim().toLowerCase()==="number"));
+    if(hi<0){say("No header row with Employee and Number was found in "+file.name+".");return}
+    const H=rows[hi].map(c=>String(c).trim().toLowerCase()),col=n=>H.indexOf(n);
+    const cE=col("employee"),cN=col("number"),cT=[col("job title"),col("title"),col("job")].find(i=>i>=0),cD=[col("department"),col("dept")].find(i=>i>=0);
+    let list=(S.emps||[]).slice();const have=new Set(list.map(x=>String(x.number||"").trim().toUpperCase()).filter(Boolean));
+    const added=[],skipped=[],noDept=[];
+    rows.slice(hi+1).forEach(r=>{const name=String(r[cE]||"").trim();if(!name)return;const number=String(r[cN]||"").trim();
+      if(number&&have.has(number.toUpperCase())){skipped.push(name);return}
+      const dept=cD>=0?String(r[cD]||"").trim():"",title=cT>=0?String(r[cT]||"").trim():"";
+      const sheet=DEPT_SHEET[dept.toLowerCase()]||(SHEETS.includes(dept)?dept:"Shared Services");if(!dept)noDept.push(name);
+      const section=dept&&dept!==sheet?dept:sheet;const gid=sheet+"|"+section+"|";
+      const id=(number||name).replace(/[^A-Za-z0-9]+/g,"-").replace(/^-|-$/g,"")+"-"+Date.now().toString(36)+added.length;
+      list.push({id,order:orderFor(gid,sheet,list),active:true,sheet,group:gid,section,shift:"",name,number,dept,title});if(number)have.add(number.toUpperCase());added.push(name)});
+    if(!added.length){say("Nobody new to add. "+skipped.length+" already on the register.");return}
+    if(!confirm("Add "+added.length+" employees to TKR Attendance?"+(skipped.length?" "+skipped.length+" already on the register will be skipped.":"")))return say("Nothing added.");
+    await saveEmps(list);
+    say(added.length+" employees added."+(skipped.length?" "+skipped.length+" skipped (already on the register).":"")+(noDept.length?" No department, put on Shared Services: "+noDept.join(", ")+". Edit them to change the sheet.":""));
+    toast(added.length+" employees added")}
+  catch(e){say("Could not read "+file.name+": "+(e.message||"try again"))}}
 async function saveEmps(list){if(!S.canWrite){toast("You can view this register but not change it.");return}
   try{await S.db.doc("config/employees").set({list,groups:S.groupDefs||[]});S.emps=list;render()}catch(e){if(denied(e)){S.canWrite=false;toast("You can view this register but not change it.")}else toast("Not saved: "+(e.message||"try again"))}}
 
