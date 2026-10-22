@@ -1,0 +1,122 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- who is who ----------
+    function signedIn() { return request.auth != null; }
+    function myEmail() { return signedIn() ? request.auth.token.get('email', '').lower() : ''; }
+    function isAdmin() { return myEmail() in ['muneer@tkroperations.com', 'amogelang@tkroperations.com']; }
+    function isManager() {
+      return isAdmin() || (exists(/databases/$(database)/documents/config/roles)
+        && myEmail() in get(/databases/$(database)/documents/config/roles).data.get('managers', []));
+    }
+
+    // ---------- Daily Task Board ----------
+    function ownsPerson(personId) {
+      return signedIn() && personId is string
+        && exists(/databases/$(database)/documents/team/$(personId))
+        && get(/databases/$(database)/documents/team/$(personId)).data.get('uid', '') == request.auth.uid;
+    }
+
+    match /config/{docId} {
+      allow read: if signedIn() && !(docId in ['attEmployees', 'attSettings']);
+      allow write: if isAdmin();
+    }
+    match /team/{id} {
+      allow read: if signedIn();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        signedIn()
+        && resource.data.get('uid', null) == null
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.authEmail == myEmail()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid', 'authEmail', 'pinSetAt'])
+      );
+    }
+    match /tasks/{id} {
+      allow read: if isManager() || ownsPerson(resource.data.person);
+      allow create: if isAdmin() || ownsPerson(request.resource.data.person);
+      allow update: if isAdmin() || (ownsPerson(resource.data.person) && request.resource.data.person == resource.data.person);
+      allow delete: if isAdmin() || ownsPerson(resource.data.person);
+    }
+
+    // ---------- GET Bakkie Log ----------
+    function approvedOp() {
+      return signedIn() && exists(/databases/$(database)/documents/getOperators/$(request.auth.uid))
+        && get(/databases/$(database)/documents/getOperators/$(request.auth.uid)).data.get('approved', false) == true;
+    }
+    function exportGrant() {
+      return signedIn() && exists(/databases/$(database)/documents/getExportGrants/$(request.auth.uid))
+        && get(/databases/$(database)/documents/getExportGrants/$(request.auth.uid)).data.get('until', 0) > request.time.toMillis();
+    }
+
+    match /getOperators/{uid} {
+      allow read: if signedIn();
+      allow create: if signedIn() && uid == request.auth.uid && request.resource.data.approved == false;
+      allow update, delete: if isAdmin();
+    }
+    match /getExportRequests/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.opUid == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.opUid == request.auth.uid && request.resource.data.status == 'pending';
+      allow update, delete: if isAdmin();
+    }
+    match /getExportGrants/{uid} {
+      allow read: if isAdmin() || (signedIn() && uid == request.auth.uid);
+      allow write: if isAdmin();
+    }
+    match /getShifts/{id} {
+      allow read: if isAdmin() || exportGrant() || (signedIn() && resource.data.ownerUid == request.auth.uid);
+      allow create: if approvedOp() && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if approvedOp() && resource.data.ownerUid == request.auth.uid && request.resource.data.ownerUid == request.auth.uid;
+      allow delete: if isAdmin() || (approvedOp() && (resource == null || resource.data.ownerUid == request.auth.uid));
+    }
+    match /getPhotos/{id} {
+      allow read: if isAdmin() || exportGrant() || (signedIn() && resource.data.ownerUid == request.auth.uid);
+      allow create: if approvedOp() && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if approvedOp() && resource.data.ownerUid == request.auth.uid && request.resource.data.ownerUid == request.auth.uid;
+      allow delete: if isAdmin() || (approvedOp() && (resource == null || resource.data.ownerUid == request.auth.uid));
+    }
+
+    // ---------- GET Forecast ----------
+    match /fcMetres/{id}   { allow read: if isManager(); allow write: if isAdmin(); }
+    match /fcIssues/{id}   { allow read: if isManager(); allow write: if isAdmin(); }
+    match /fcCounts/{id}   { allow read: if isManager(); allow write: if isAdmin(); }
+    match /fcSettings/{id} { allow read: if isManager(); allow write: if isAdmin(); }
+
+    // ---------- Attendance ----------
+    function attAdmin() { return myEmail() in ['muneer@tkroperations.com', 'amogelang@tkroperations.com', 'amogelangmabilu56@gmail.com']; }
+    function attRoles() { return get(/databases/$(database)/documents/config/attendance).data; }
+    function attHasRoles() { return exists(/databases/$(database)/documents/config/attendance); }
+    function attCapturer() { return attAdmin() || (attHasRoles() && myEmail() in attRoles().get('capturers', [])); }
+    function attViewer() { return attCapturer() || (attHasRoles() && myEmail() in attRoles().get('viewers', [])); }
+
+    match /config/attendance {
+      allow read: if myEmail() != '';
+      allow write: if attAdmin();
+    }
+    match /config/attEmployees {
+      allow read: if attViewer();
+      allow write: if attCapturer();
+    }
+    match /config/attSettings {
+      allow read: if attViewer();
+      allow write: if attCapturer();
+    }
+    match /attCycles/{id} {
+      allow read: if attViewer();
+      allow write: if attAdmin();
+    }
+    match /attMarks/{id} {
+      allow read: if attViewer();
+      allow write: if attCapturer();
+    }
+    match /attRota/{id} {
+      allow read: if attViewer();
+      allow write: if attCapturer();
+    }
+    match /attMonths/{month}/sheets/{sheet} {
+      allow read: if attViewer();
+      allow write: if attCapturer();
+    }
+  }
+}
