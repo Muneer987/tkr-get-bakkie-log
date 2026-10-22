@@ -136,10 +136,10 @@ function render(){
   if(!S.db)return;
   if(S.emps===null){main.innerHTML='<div class="empty"><b>Opening the register</b>Loading employees and this cycle\'s marks.</div>';return}
   if(S.view==="users"&&!isAdmin())S.view="mark";
-  if(!activeEmps().length&&S.view!=="people"&&S.view!=="users"){main.innerHTML=isAdmin()?'<div class="empty"><b>No employees yet</b>Load the TKR Attendance data file to bring in your employees, shift rotas and marks.<div class="bar" style="justify-content:center;margin-top:14px"><button class="btn gold" id="emptyLoad">Load data file</button></div><p class="note" id="uMsg" role="status"></p><input type="file" id="dataIn" accept=".json,application/json" hidden></div>':'<div class="empty"><b>No employees yet</b>Ask admin to load the register.</div>';
+  if(!activeEmps().length&&S.view!=="people"&&S.view!=="users"&&S.view!=="groups"){main.innerHTML=isAdmin()?'<div class="empty"><b>No employees yet</b>Load the TKR Attendance data file to bring in your employees, shift rotas and marks.<div class="bar" style="justify-content:center;margin-top:14px"><button class="btn gold" id="emptyLoad">Load data file</button></div><p class="note" id="uMsg" role="status"></p><input type="file" id="dataIn" accept=".json,application/json" hidden></div>':'<div class="empty"><b>No employees yet</b>Ask admin to load the register.</div>';
     if(isAdmin()){$("emptyLoad").onclick=()=>$("dataIn").click();$("dataIn").onchange=ev=>{const f=ev.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{try{loadBackup(JSON.parse(rd.result))}catch(e){toast("That file is not a TKR Attendance data file")}};rd.readAsText(f);ev.target.value=""}}
     return}
-  ({mark:viewMark,daily:viewDaily,cycle:viewCycle,export:viewExport,flags:viewFlags,people:viewPeople,users:viewUsers}[S.view]||viewMark)();
+  ({mark:viewMark,daily:viewDaily,cycle:viewCycle,export:viewExport,flags:viewFlags,people:viewPeople,groups:viewGroups,users:viewUsers}[S.view]||viewMark)();
 }
 
 function cycleBanner(){const gap=rotaGap();if(!gap)return"";const c=cycleOf(S.date);
@@ -197,8 +197,50 @@ function viewCycle(){const c=cycleOf(S.date);const upto=c.dates.filter(d=>d<=S.d
 }
 
 let editing=null;
+// Shift groups: the groups the employees are in, plus empty groups made in the app (saved with the employee list)
+function allGroups(){const m=new Map();(S.emps||[]).filter(x=>x.active!==false).forEach(x=>{if(!m.has(x.group))m.set(x.group,{id:x.group,sheet:x.sheet,section:x.section,shift:x.shift})});
+  (S.groupDefs||[]).forEach(g=>{if(g.removed){if(!(S.emps||[]).some(x=>x.active!==false&&x.group===g.id))m.delete(g.id)}else m.set(g.id,Object.assign(m.get(g.id)||{},g))});
+  return [...m.values()].sort((a,b)=>SHEETS.indexOf(a.sheet)-SHEETS.indexOf(b.sheet)||groupFirst(a.id)-groupFirst(b.id))}
+function groupFirst(id){const o=(S.emps||[]).filter(x=>x.group===id).map(x=>x.order);return o.length?Math.min(...o):1e9}
+function orderFor(gid,sheet,list,skip){const same=list.filter(x=>x.group===gid&&x.id!==skip);if(same.length)return Math.max(...same.map(x=>x.order))+0.001;
+  const sh=list.filter(x=>x.sheet===sheet&&x.id!==skip);return (sh.length?Math.max(...sh.map(x=>x.order)):list.length)+1}
+const gName=g=>groupLabel({sheet:g.sheet,section:g.section,shift:g.shift});
+let editingGroup=null;
+function viewGroups(){const gs=allGroups().filter(g=>S.sheet==="All"||g.sheet===S.sheet);const eg=editingGroup||{};const w=S.canWrite;
+  let h=w?'<form class="form" id="grpForm"><label>Sheet<select id="g-sheet" '+(editingGroup?"disabled":"")+'>'+SHEETS.map(x=>'<option'+((eg.sheet||(S.sheet!=="All"?S.sheet:""))===x?" selected":"")+'>'+esc(x)+'</option>').join("")+'</select></label>'+
+   '<label>Section (optional)<input id="g-section" placeholder="For example Pit" value="'+esc(eg.section&&eg.section!==eg.sheet?eg.section:"")+'"></label>'+
+   '<label>Group name<input id="g-shift" required placeholder="For example Shift A" value="'+esc(eg.shift||"")+'"></label>'+
+   '<div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap"><button class="btn gold" type="submit">'+(editingGroup?"Save name":"Add group")+'</button>'+(editingGroup?'<button class="btn" type="button" id="cancelGrp">Cancel</button>':"")+'</div></form>':"";
+  h+=chipsBar("");
+  if(!gs.length)h+='<div class="empty"><b>No shift groups yet</b>Add a group above, then put employees in it.</div>';
+  gs.forEach(g=>{const mem=activeEmps().filter(x=>x.group===g.id).sort((a,b)=>a.order-b.order);const others=allGroups().filter(o=>o.sheet===g.sheet&&o.id!==g.id);
+    h+='<section class="group"><div class="ghead"><span class="gname">'+esc(g.sheet+" · "+gName(g))+'</span><span class="note">'+mem.length+' '+(mem.length===1?"person":"people")+'</span>'+
+     (w?'<span style="margin-left:auto;display:flex;gap:6px"><button class="btn sm" data-grename="'+esc(g.id)+'">Rename</button><button class="btn sm" data-gremove="'+esc(g.id)+'">Remove</button></span>':"")+'</div>';
+    h+=mem.length?'<div class="tbl-wrap"><table><tbody>'+mem.map(x=>'<tr><td>'+esc(x.name)+'<br><span class="note">'+esc([x.number,x.title].filter(Boolean).join(" · "))+'</span></td><td style="width:1%;white-space:nowrap">'+
+      (w&&others.length?'<label class="note" style="display:block">Move to<select data-gmove="'+esc(x.id)+'"><option value="">Choose group</option>'+others.map(o=>'<option value="'+esc(o.id)+'">'+esc(gName(o))+'</option>').join("")+'</select></label>':"")+'</td></tr>').join("")+'</tbody></table></div>'
+      :'<p class="note" style="margin:8px 0">Nobody in this group yet. Move people here from another group, or add a new employee to it on the Employees tab.</p>';
+    h+='</section>'});
+  h+='<p class="note">Employees can be moved to another group on the same sheet. Their marks stay with them.</p>';
+  main.innerHTML=h;
+  const f=$("grpForm");if(f)f.onsubmit=ev=>{ev.preventDefault();const shift=$("g-shift").value.trim(),section=$("g-section").value.trim();if(!shift){toast("Type the group name");return}
+    if(editingGroup){const id=editingGroup.id,sheet=editingGroup.sheet,sec=section||sheet;editingGroup=null;
+      S.groupDefs=(S.groupDefs||[]).filter(x=>x.id!==id).concat([{id,sheet,section:sec,shift}]);
+      saveEmps((S.emps||[]).map(x=>x.group===id?Object.assign({},x,{section:sec,shift}):x)).then(()=>toast("Group renamed"));return}
+    const sheet=$("g-sheet").value,sec=section||sheet;
+    if(allGroups().some(x=>x.sheet===sheet&&gName(x).toLowerCase()===gName({sheet,section:sec,shift}).toLowerCase())){toast("That group is already on "+sheet);return}
+    S.groupDefs=(S.groupDefs||[]).concat([{id:sheet+"|"+sec+"|"+shift+"|"+Date.now().toString(36),sheet,section:sec,shift}]);
+    saveEmps(S.emps||[]).then(()=>toast(gName({sheet,section:sec,shift})+" added to "+sheet))};
+  const c=$("cancelGrp");if(c)c.onclick=()=>{editingGroup=null;render()};
+  main.querySelectorAll("[data-grename]").forEach(b=>b.onclick=()=>{editingGroup=allGroups().find(x=>x.id===b.dataset.grename);render();window.scrollTo({top:0})});
+  main.querySelectorAll("[data-gremove]").forEach(b=>b.onclick=()=>{const g=allGroups().find(x=>x.id===b.dataset.gremove);const n=activeEmps().filter(x=>x.group===g.id).length;
+    if(n){toast("Move the "+n+" "+(n===1?"person":"people")+" in "+gName(g)+" to another group first");return}
+    if(!confirm("Remove the group "+gName(g)+" from "+g.sheet+"?"))return;S.groupDefs=(S.groupDefs||[]).filter(x=>x.id!==g.id).concat([{id:g.id,sheet:g.sheet,removed:true}]);
+    saveEmps(S.emps||[]).then(()=>toast(gName(g)+" removed"))});
+  main.querySelectorAll("[data-gmove]").forEach(sel=>sel.onchange=()=>{const to=allGroups().find(x=>x.id===sel.value);if(!to)return;const list=(S.emps||[]).slice();const x=list.find(y=>y.id===sel.dataset.gmove);
+    const order=orderFor(to.id,to.sheet,list,x.id);saveEmps(list.map(y=>y.id===x.id?Object.assign({},y,{group:to.id,section:to.section,shift:to.shift,order}):y)).then(()=>toast(x.name+" moved to "+gName(to)))});
+}
 function viewPeople(){const list=filtered().sort((a,b)=>SHEETS.indexOf(a.sheet)-SHEETS.indexOf(b.sheet)||a.order-b.order);const e=editing||{};
-  const groups=[...new Map((S.emps||[]).map(x=>[x.group,x])).values()];
+  const groups=allGroups().map(g=>({group:g.id,sheet:g.sheet,section:g.section,shift:g.shift}));
   let h='<form class="form" id="empForm"><label>Sheet<select id="f-sheet" required>'+SHEETS.map(s=>'<option'+(e.sheet===s?" selected":"")+'>'+esc(s)+'</option>').join("")+'</select></label>'+
    '<label>Shift group<select id="f-group">'+groups.map(g=>'<option value="'+esc(g.group)+'" data-sheet="'+esc(g.sheet)+'"'+(e.group===g.group?" selected":"")+'>'+esc(g.sheet+" · "+groupLabel(g))+'</option>').join("")+'</select></label>'+
    '<label>Name (Surname, First names)<input id="f-name" required value="'+esc(e.name||"")+'"></label><label>Employee number<input id="f-number" value="'+esc(e.number||"")+'"></label>'+
@@ -217,7 +259,7 @@ function viewPeople(){const list=filtered().sort((a,b)=>SHEETS.indexOf(a.sheet)-
   main.innerHTML=h;
 }
 async function saveEmps(list){if(!S.canWrite){toast("You can view this register but not change it.");return}
-  try{await S.db.doc("config/employees").set({list});S.emps=list;render()}catch(e){if(denied(e)){S.canWrite=false;toast("You can view this register but not change it.")}else toast("Not saved: "+(e.message||"try again"))}}
+  try{await S.db.doc("config/employees").set({list,groups:S.groupDefs||[]});S.emps=list;render()}catch(e){if(denied(e)){S.canWrite=false;toast("You can view this register but not change it.")}else toast("Not saved: "+(e.message||"try again"))}}
 
 // ---------- mark panel ----------
 function openPanel(e){const v=markOf(e,S.date);const now=new Date();const tm=isTime(v)?v:pad(now.getHours())+":"+pad(now.getMinutes());
@@ -356,13 +398,13 @@ function viewUsers(){const row=(em,role)=>'<tr><td>'+esc(em)+'</td><td>'+(role==
 }
 async function loadBackup(b){if(!b||!b.employees||!b.months){toast("That file is not a TKR Attendance data file");return}
   const msg=$("uMsg")||{set textContent(v){toast(v)}};msg.textContent="Loading the data file…";
-  try{await S.db.doc("config/employees").set({list:b.employees});
+  try{await S.db.doc("config/employees").set({list:b.employees,groups:b.groups||[]});
     if(b.settings)await S.db.doc("config/settings").set(b.settings);
     for(const id in (b.rota||{}))await S.db.doc("cycles/"+id).set(b.rota[id]);
     for(const m in b.months)for(const sh in b.months[m])await S.db.doc("months/"+m+"/sheets/"+sh).update(b.months[m][sh]);
     msg.textContent="Data file loaded: "+b.employees.length+" employees, "+Object.keys(b.months).length+" months of marks.";toast("Data file loaded")}
   catch(e){msg.textContent=denied(e)?"Your sign-in is not allowed to use the register yet. In the Firebase console open tkr-operations-app, then Firestore Database, then Rules, add the TKR Attendance rules and tap Publish. Then close and open the app again.":"Loading stopped: "+(e.message||"try again")}}
-async function saveBackup(){const b={employees:S.emps||[],settings:{cycles:CUSTOM},rota:S.cycles,months:{}};
+async function saveBackup(){const b={employees:S.emps||[],groups:S.groupDefs||[],settings:{cycles:CUSTOM},rota:S.cycles,months:{}};
   const ms=new Set();Object.keys(S.rota).forEach(g=>Object.keys(S.rota[g]).forEach(d=>ms.add(monthOf(d))));Object.keys(S.mm).forEach(m=>ms.add(m));
   for(const m of ms){if(!S.mm[m]){const snap=await S.db.collection("months/"+m+"/sheets").get();applyMonth(m,snap)}b.months[m]={};for(const sh in S.mm[m]||{})b.months[m][sh]={sheet:sh,month:m,marks:S.mm[m][sh].marks,ot:S.mm[m][sh].ot}}
   const blob=new Blob([JSON.stringify(b)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="TKR Attendance data "+iso(new Date())+".json";document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000)}
@@ -380,12 +422,11 @@ main.addEventListener("input",ev=>{if(ev.target.id==="q"){S.q=ev.target.value;co
 main.addEventListener("submit",ev=>{if(ev.target.id!=="empForm")return;ev.preventDefault();
   const f={sheet:$("f-sheet").value,group:$("f-group").value,name:$("f-name").value.trim(),number:$("f-number").value.trim(),dept:$("f-dept").value.trim(),title:$("f-title").value.trim()};
   if(!f.name){toast("Enter the employee's name");return}
-  const g=(S.emps||[]).find(x=>x.group===f.group);if(!g||g.sheet!==f.sheet){f.section=f.sheet;f.shift="";f.group=f.sheet+"|"+f.sheet+"|"}else{f.section=g.section;f.shift=g.shift}
+  const g=allGroups().find(x=>x.id===f.group);if(!g||g.sheet!==f.sheet){f.section=f.sheet;f.shift="";f.group=f.sheet+"|"+f.sheet+"|"}else{f.section=g.section;f.shift=g.shift}
   let list=(S.emps||[]).slice();
-  if(editing){list=list.map(x=>x.id===editing.id?Object.assign({},x,f):x)}
+  if(editing){const moved=editing.group!==f.group;if(moved)f.order=orderFor(f.group,f.sheet,list,editing.id);list=list.map(x=>x.id===editing.id?Object.assign({},x,f):x)}
   else{const id=(f.number||f.name).replace(/[^A-Za-z0-9]+/g,"-").replace(/^-|-$/g,"")+"-"+Date.now().toString(36);
-    const sameGroup=list.filter(x=>x.group===f.group);const order=sameGroup.length?Math.max(...sameGroup.map(x=>x.order))+0.01:list.length;
-    list.push(Object.assign({id,order,active:true},f))}
+    list.push(Object.assign({id,order:orderFor(f.group,f.sheet,list),active:true},f))}
   const wasEdit=!!editing;editing=null;saveEmps(list).then(()=>toast(wasEdit?"Changes saved":f.name+" added"))});
 main.addEventListener("change",ev=>{if((ev.target.id==="flg-from"||ev.target.id==="flg-to")&&ev.target.value){const F=S.flg;F.type="custom";F[ev.target.id==="flg-from"?"from":"to"]=ev.target.value;if(F.to<F.from)[F.from,F.to]=[F.to,F.from];if(rangeDates(F.from,F.to).length>=400){F.to=addDays(F.from,365);toast("A check covers at most one year")}render();return}
   if((ev.target.id==="exp-from"||ev.target.id==="exp-to")&&ev.target.value){const E=S.exp;E.type="custom";E[ev.target.id==="exp-from"?"from":"to"]=ev.target.value;if(E.to<E.from)[E.from,E.to]=[E.to,E.from];if(rangeDates(E.from,E.to).length>=400){E.to=addDays(E.from,365);toast("A report covers at most one year")}render();return}
@@ -415,7 +456,7 @@ main.addEventListener("click",ev=>{const t=ev.target.closest("button");if(!t)ret
 // ---------- boot ----------
 render();
 startApp=function(db){if(S.db)return;S.db=db;S.canWrite=canWrite();
-  db.doc("config/employees").onSnapshot(d=>{S.emps=d.exists?(d.data().list||[]):[];render()},err);
+  db.doc("config/employees").onSnapshot(d=>{S.emps=d.exists?(d.data().list||[]):[];S.groupDefs=d.exists?(d.data().groups||[]):[];render()},err);
   db.collection("cycles").onSnapshot(snap=>{S.cycles={};snap.docs.forEach(d=>{S.cycles[d.id]=d.data()});applyRotas();render()},err);
   db.doc("config/settings").onSnapshot(d=>{setCustom(d.exists?d.data().cycles:[]);watchCycle();render()},err);
   watchCycle();render()};

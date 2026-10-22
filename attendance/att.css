@@ -112,3 +112,4 @@ td.pc{font-weight:600;color:var(--gold)} td.lowpc{color:var(--bad);font-weight:6
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:8px;z-index:30;font-weight:500;max-width:calc(100% - 32px)}
 @media (prefers-reduced-motion:no-preference){.panel{animation:up .18s ease-out}@keyframes up{from{transform:translateY(30px);opacity:.6}}}
 .brand .home{color:#d6a83c;text-decoration:none;font:700 34px/1 var(--display);padding:0 4px}
+select[data-gmove]{display:block;margin-top:4px;font:500 14px/1.2 var(--body);padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--fg);min-height:38px;max-width:160px}
