@@ -256,9 +256,11 @@ function viewPeople(){const list=filtered().sort((a,b)=>SHEETS.indexOf(a.sheet)-
   const gone=(S.emps||[]).filter(x=>x.active===false);
   if(gone.length)h+='<h2 class="sheet-h">Removed employees <small>'+gone.length+'</small></h2><div class="tbl-wrap"><table><thead><tr><th>Employee</th><th>Sheet</th><th>Reason</th><th>Last working day</th><th></th></tr></thead><tbody>'+
     gone.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+esc(x.sheet)+'</td><td>'+esc(x.leftReason||"")+'</td><td>'+(x.leftDate?nice(x.leftDate)+" "+yr(x.leftDate):"")+'</td><td><button class="btn sm" data-restore="'+esc(x.id)+'">Put back</button></td></tr>').join("")+'</tbody></table></div>';
+  if(S.canWrite)h+='<div class="list" style="margin-top:18px"><h3>Update from the register Excel</h3><p class="note" style="margin:0 0 8px">Pick the register (one tab per sheet: rompad, support fleet, shared services, drilling, intern). The app puts everyone in the shift group they are under (SHIFT A, SHIFT B …), sets each group\'s DAY / NIGHT / OFF rota from the group row, and copies the marks for every date in the file. Anyone not yet on the register is added. Empty cells in the Excel do not clear marks in the app.</p><button class="btn gold" id="impReg">Choose register Excel</button><input type="file" id="regFile" accept=".xlsx,.xls,.xlsb" hidden><p class="note" id="regMsg" role="status">'+esc(regNote)+'</p></div>';
   if(S.canWrite)h+='<div class="list" style="margin-top:18px"><h3>Add employees from Excel</h3><p class="note" style="margin:0 0 8px">Pick an Excel list with the columns Employee, Number, Job Title and Department. People already on the register (same employee number) are skipped. Department decides the sheet: Rompad, Drilling and Shared Services go to their own sheet; Buses, Water Bowsers, Low Beds and TLB go to Support Fleet; Corporate goes to Shared Services. Each department becomes a shift group.</p><button class="btn gold" id="impEmps">Choose Excel file</button><input type="file" id="impFile" accept=".xlsx,.xls,.xlsb,.csv" hidden><p class="note" id="impMsg" role="status">'+esc(impNote)+'</p></div>';
   if(isAdmin()&&(S.emps||[]).length)h+='<div class="list" style="margin-top:18px"><h3>Remove all employees</h3><p class="note" style="margin:0 0 8px">Clears the whole employee list ('+(S.emps||[]).length+' people, including removed ones) so you can add your own. A copy of the data file downloads first, so you can load it back under Users if you need it. Marks already saved are not deleted.</p><button class="btn" id="clearEmps" style="border-color:var(--bad);color:var(--bad)">Remove all employees</button></div>';
   main.innerHTML=h;
+  const rb=$("impReg");if(rb){rb.onclick=()=>$("regFile").click();$("regFile").onchange=ev=>{const f=ev.target.files[0];ev.target.value="";if(f)importRegister(f)}}
   const ib=$("impEmps");if(ib){ib.onclick=()=>$("impFile").click();$("impFile").onchange=ev=>{const f=ev.target.files[0];ev.target.value="";if(f)importEmps(f)}}
   const ce=$("clearEmps");if(ce)ce.onclick=async()=>{const n=(S.emps||[]).length;
     if(!confirm("Remove all "+n+" employees from TKR Attendance? A copy of the data file downloads first."))return;
@@ -269,7 +271,66 @@ function viewPeople(){const list=filtered().sort((a,b)=>SHEETS.indexOf(a.sheet)-
 // Add employees from an Excel list (Employee, Number, Job Title, Department). Skips numbers already on the register.
 const DEPT_SHEET={"rompad":"Rompad","drilling":"Drilling","shared services":"Shared Services","interns":"Interns","support fleet":"Support Fleet","corporate":"Shared Services",
   "buses":"Support Fleet","bus":"Support Fleet","water bowsers":"Support Fleet","water bowser":"Support Fleet","low beds":"Support Fleet","lowbeds":"Support Fleet","low bed":"Support Fleet","tlb":"Support Fleet"};
-let impNote="";
+let impNote="",regNote="";
+// ---------- update from the register Excel (same layout as the TKR timesheet) ----------
+const TAB_SHEET=t=>{t=t.toLowerCase().replace(/[^a-z]/g,"");if(t.startsWith("rompad"))return "Rompad";if(t.startsWith("support"))return "Support Fleet";if(t.startsWith("drill"))return "Drilling";
+  if(t.startsWith("share"))return "Shared Services";if(t.startsWith("intern"))return "Interns";return null};
+const CODE_FIX={"P":"P","PRESENT":"P","SICK":"SICK","FAMILY REPONSIBILITY":"FAMILY RESPONSIBILITY","FAMILY RESPONSIBILTY":"FAMILY RESPONSIBILITY","FAMALY EMERGENCY":"FAMILY EMERGENCY","SITE OFFICE MEETING":"SITE OFFICE","SITE OFFICE":"SITE OFFICE","PIT LICENSE":"PIT LICENCE"};
+const ROTA_VAL=v=>{v=String(v||"").trim().toUpperCase();return v==="DAY"||v==="NIGHT"||v==="OFF"?v:""};
+const serialISO=n=>{const d=new Date(Math.round((n-25569)*864e5));return d.getUTCFullYear()+"-"+pad(d.getUTCMonth()+1)+"-"+pad(d.getUTCDate())};
+const markVal=v=>{if(v===""||v==null)return"";if(typeof v==="number"){if(v>0&&v<1){const m=Math.round(v*1440);return pad(Math.floor(m/60)%24)+":"+pad(m%60)}return""}
+  let t=String(v).replace(/\s+/g," ").trim().toUpperCase();if(!t)return"";if(/^\d{1,2}:\d{2}(:\d{2})?$/.test(t)){const [h,mi]=t.split(":");return pad(+h)+":"+mi}return CODE_FIX[t]||t};
+const normName=n=>String(n||"").toLowerCase().replace(/\s*,\s*/g,",").replace(/\s+/g," ").trim();
+function trimRef(ws){let maxR=0,maxC=0;for(const k in ws){if(k[0]==="!")continue;const c=XLSX.utils.decode_cell(k);if(ws[k].v===undefined||ws[k].v===null||ws[k].v==="")continue;if(c.r>maxR)maxR=c.r;if(c.c>maxC)maxC=c.c}
+  ws["!ref"]=XLSX.utils.encode_range({s:{r:0,c:0},e:{r:maxR,c:maxC}})}
+function parseRegister(wb){const out=[];
+  wb.SheetNames.forEach(tab=>{const sheet=TAB_SHEET(tab);if(!sheet)return;const ws=wb.Sheets[tab];trimRef(ws);
+    const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:"",raw:true});
+    let dateCols=null,section=sheet,shift="",gkey="",seen={},rota=null,order=0;
+    const txt=(r,i)=>String(r[i]??"").trim();
+    rows.forEach(r=>{const dc=[];r.forEach((v,i)=>{if(typeof v==="number"&&v>40000&&v<60000)dc.push([i,serialISO(v)])});
+      if(dc.length>=5){dateCols=dc;return}
+      const b=txt(r,1),c=txt(r,2),d=txt(r,3),e=txt(r,4);if(!b||b.toLowerCase()==="employee")return;
+      const isEmp=!!(c||d||e);
+      if(!isEmp){const rv=dateCols?dateCols.map(([i,dt])=>[dt,ROTA_VAL(r[i])]).filter(x=>x[1]):[];
+        const looksShift=/shift|monday|week|day|night/i.test(b);
+        if(rv.length&&looksShift){shift=b}else{section=b.toLowerCase()===sheet.toLowerCase()?sheet:b;shift=rv.length?"":""}
+        const base=sheet+"|"+section+"|"+shift;seen[base]=(seen[base]||0)+1;gkey=base+(seen[base]>1?"|"+seen[base]:"");
+        rota=rv.length?Object.fromEntries(rv):null;out.push({kind:"group",sheet,section,shift,gid:gkey,rota});return}
+      if(/^vacant$/i.test(b))return;
+      if(!gkey){const base=sheet+"|"+section+"|"+shift;gkey=base}
+      const marks={};(dateCols||[]).forEach(([i,dt])=>{const v=markVal(r[i]);if(v)marks[dt]=v});
+      out.push({kind:"emp",sheet,section,shift,gid:gkey,name:b,number:c,dept:d,title:e,marks,row:order++})})});
+  return out}
+async function importRegister(file){const say=t=>{regNote=t;const m=$("regMsg");if(m)m.textContent=t};say("Reading "+file.name+"…");
+  try{if(!window.XLSX)throw new Error("The Excel reader has not loaded yet. Try again.");
+    const items=parseRegister(XLSX.read(await file.arrayBuffer(),{type:"array"}));const emps=items.filter(x=>x.kind==="emp");
+    if(!emps.length){say("No employees found. Check that the tabs are named rompad, support fleet, shared services, drilling and intern.");return}
+    let list=(S.emps||[]).map(x=>Object.assign({},x));const byNum={},byName={};
+    list.forEach(x=>{const n=String(x.number||"").trim().toUpperCase();if(n)(byNum[n]=byNum[n]||[]).push(x);(byName[normName(x.name)]=byName[normName(x.name)]||[]).push(x)});
+    const used=new Set(),added=[],moved=[],marks={},rotaGroups={};let nMarks=0,seq=0;
+    items.filter(x=>x.kind==="group"&&x.rota).forEach(g=>{rotaGroups[g.gid]={sheet:g.sheet,section:g.section,shift:g.shift,rota:g.rota}});
+    const sheetBase=sh=>(SHEETS.indexOf(sh)+1)*10000;
+    for(const r of emps){const n=r.number.toUpperCase();let x=(n&&byNum[n]&&byNum[n].length===1?byNum[n][0]:null)||((byName[normName(r.name)]||[]).find(y=>!used.has(y.id))||null);
+      if(x&&used.has(x.id))x=null;
+      if(!x){const sur=normName(r.name).split(",")[0],first=(normName(r.name).split(",")[1]||"").split(" ")[0];
+        const c=list.filter(y=>!used.has(y.id)&&normName(y.name).split(",")[0]===sur&&((n&&String(y.number||"").toUpperCase().startsWith(n))||(first.length>=3&&(normName(y.name).split(",")[1]||"").startsWith(first.slice(0,4)))));
+        if(c.length===1)x=c[0]}
+      const g={sheet:r.sheet,group:r.gid,section:r.section,shift:r.shift,order:sheetBase(r.sheet)+(seq++)};
+      if(x){if(x.group!==g.group)moved.push(x.name);Object.assign(x,g,{active:true});if(!x.number&&r.number)x.number=r.number;if(!x.title&&r.title)x.title=r.title;if(!x.dept&&r.dept)x.dept=r.dept;delete x.leftDate;delete x.leftReason}
+      else{x=Object.assign({id:(r.number||r.name).replace(/[^A-Za-z0-9]+/g,"-").replace(/^-|-$/g,"")+"-"+Date.now().toString(36)+seq,active:true,name:r.name,number:r.number,dept:r.dept,title:r.title},g);list.push(x);added.push(r.name)}
+      used.add(x.id);
+      for(const dt in r.marks){const m=dt.slice(0,7),sid=SHEET_ID[r.sheet];((marks[m]=marks[m]||{})[sid]=marks[m][sid]||{sheet:r.sheet,month:m,marks:{}}).marks[x.id]=Object.assign(marks[m][sid].marks[x.id]||{},{[dt]:r.marks[dt]});nMarks++}}
+    const notIn=list.filter(x=>x.active!==false&&!used.has(x.id));notIn.forEach(x=>{x.order=900000+(x.order||0)});
+    const dates=Object.values(rotaGroups).flatMap(g=>Object.keys(g.rota)).sort();
+    if(!confirm("Update TKR Attendance from "+file.name+"?\n\n"+used.size+" employees in "+new Set(emps.map(x=>x.gid)).size+" shift groups ("+added.length+" new, "+moved.length+" moved to a new group)\n"+nMarks+" marks"+(dates.length?"\nRotas for "+short(dates[0])+" – "+short(dates.at(-1)):"")))return say("Nothing changed.");
+    say("Saving…");S.groupDefs=(S.groupDefs||[]).filter(d=>!d.removed);
+    await saveEmps(list);
+    if(dates.length){const c=cycleOf(dates[0]);const id="r-"+c.start;await S.db.doc("cycles/"+id).update({start:c.start,end:c.end,groups:rotaGroups})}
+    for(const m in marks)for(const sid in marks[m]){const d=marks[m][sid];await S.db.doc("months/"+m+"/sheets/"+sid).update({sheet:d.sheet,month:m,marks:d.marks,updatedBy:email,updatedAt:Date.now()})}
+    say("Done: "+used.size+" employees put in their shift groups, "+nMarks+" marks copied"+(added.length?", "+added.length+" new employees added ("+added.join(", ")+")":"")+"."+(notIn.length?" "+notIn.length+" people on the register are not in this Excel and were left as they are: "+notIn.map(x=>x.name).join(", ")+".":""));
+    toast("Register updated")}
+  catch(e){say(denied(e)?"Your sign-in is not allowed to change the register.":"Could not read "+file.name+": "+(e.message||"try again"))}}
 async function importEmps(file){const say=t=>{impNote=t;const m=$("impMsg");if(m)m.textContent=t};say("Reading "+file.name+"…");
   try{if(!window.XLSX)throw new Error("The Excel reader has not loaded yet. Try again.");
     const wb=XLSX.read(await file.arrayBuffer(),{type:"array"});const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:""});
