@@ -81,6 +81,8 @@ const safe = s => String(s || "").replace(/[^A-Za-z0-9-]+/g, "-").replace(/^-|-$
 function photoNames(s, m) {
   return (m.photos || []).map((id, n) => `${s.date}_${s.shift}_${(m.time || "").replace(":", "h")}_${safe(TYPES[m.type]?.label || m.type)}_${safe(m.item)}${m.itemNo ? "_" + safe(m.itemNo) : ""}_${n + 1}.jpg`);
 }
+const signNames = s => (s.signPhotos || []).map((id, n) => `${s.date}_${s.shift}_Signed-sheet_${n + 1}.jpg`);
+const allPhotos = s => [...(s.moves || []).flatMap(m => m.photos || []), ...(s.signPhotos || [])];
 function blobToDataURL(b) { return new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(b); }); }
 async function dataURLToBlob(u) { return (await fetch(u)).blob(); }
 
@@ -111,7 +113,7 @@ function newShift() {
   return { id: newId(), date: isoDate(d), shift: night ? "Night" : "Day", operator: opNow?.name || prev?.operator || "", bakkie: prev?.bakkie || "", supervisor: "",
     timeOut: nowHM(), timeBack: "", trips: [{ id: newId(), out: nowHM(), back: "" }], start, moves: [], rigs, comments: "",
     handover: { fromLabel: prev ? fmtDate(prev.date) + " " + prev.shift : "", handedBy: prev?.operator || "", takenBy: "", time: nowHM(), checked: "", notes: "" },
-    signOperator: "", signSupervisor: "", signStore: "", closed: false, createdAt: Date.now() };
+    signOperator: "", signSupervisor: "", signStore: "", signPhotos: [], closed: false, createdAt: Date.now() };
 }
 
 /* ---------- trips: each run to the store in a shift. Shift time out = first trip out, time back = last trip back ---------- */
@@ -135,7 +137,7 @@ function clearCard() {
   const list = clearable();
   if (!list.length) return `<div class="info">Export done. There are no closed shifts to clear. The latest shift and open shifts always stay on the tablet.</div>`;
   return `<div class="info"><b>Export done.</b> Check that the file arrived on WhatsApp or email, then you can clear these ${list.length} closed shift${list.length === 1 ? "" : "s"} (${fmtDate(lastExport.from)} to ${fmtDate(lastExport.to)}) from this tablet.
-    The latest shift and open shifts stay.${lastExport.photos || !list.some(s => (s.moves || []).some(m => (m.photos || []).length)) ? "" :" <b>You exported Excel only, so clearing also deletes the photos of these shifts.</b>"}
+    The latest shift and open shifts stay.${lastExport.photos || !list.some(s => allPhotos(s).length) ? "" :" <b>You exported Excel only, so clearing also deletes the photos of these shifts.</b>"}
     <div class="row" style="margin-top:10px"><button class="danger" id="clearExported">Clear these shifts</button><button class="ghost" id="keepExported">Keep them</button></div></div>`;
 }
 
@@ -184,10 +186,10 @@ function logTable(list) {
   const sum = {}; rows.forEach(({ m }) => { sum[m.type] = (sum[m.type] || 0) + (Number(m.qty) || 0); });
   return `<div class="card" style="padding:12px 16px"><div class="row" style="gap:18px">${Object.entries(TYPES).map(([k, t]) => `<span><span class="muted">${t.label}</span> <b class="num">${sum[k] || 0}</b></span>`).join("")}</div></div>
   <div class="card wide"><div class="tbl"><table>
-    <thead><tr><th>Date</th><th>Shift</th><th>Trip</th><th>Time</th><th>On board</th><th>Movement</th><th>Rig</th><th>Item</th><th class="num">Qty</th><th>Item no.</th><th>Old no. back</th><th>Block / hole</th><th>Received by</th><th>Operator</th><th class="num">Photos</th></tr></thead>
+    <thead><tr><th>Date</th><th>Shift</th><th>Trip</th><th>Time</th><th>On board</th><th>Movement</th><th>Rig</th><th>Item</th><th class="num">Qty</th><th>Item no.</th><th>Old no. back</th><th>Block / hole</th><th>Received by</th><th>Comment</th><th>Operator</th><th class="num">Photos</th></tr></thead>
     <tbody>${rows.map(({ s, m }) => `<tr><td>${esc(fmtDate(s.date))}</td><td>${esc(s.shift)}</td><td class="num">${tripNo(s, m.trip)}</td><td class="num">${esc(m.time)}</td><td class="num">${esc(m.onBoard)}</td>
       <td class="${m.type === "lost" ? "flag" : ""}">${esc(TYPES[m.type]?.label || m.type)}</td><td>${esc(m.rig)}</td><td>${esc(m.item)}</td><td class="num">${esc(m.qty)}</td>
-      <td>${esc(m.itemNo)}</td><td>${esc(m.oldNo)}</td><td>${esc(m.block)}</td><td>${esc(m.by)}</td><td>${esc(s.operator)}</td><td class="num">${(m.photos || []).length || ""}</td></tr>`).join("")}</tbody></table></div></div>`;
+      <td>${esc(m.itemNo)}</td><td>${esc(m.oldNo)}</td><td>${esc(m.block)}</td><td>${esc(m.by)}</td><td>${esc(m.note)}</td><td>${esc(s.operator)}</td><td class="num">${(m.photos || []).length || ""}</td></tr>`).join("")}</tbody></table></div></div>`;
 }
 
 function backupView() {
@@ -224,9 +226,10 @@ function renderShift() {
     const t = TYPES[m.type] || TYPES.received;
     const tn = tripNo(s, m.trip);
     const detail = [tn && "Trip " + tn, m.onBoard && "on board " + m.onBoard, m.itemNo && "No. " + m.itemNo, m.oldNo && "old " + m.oldNo + " back", m.block && "block/hole " + m.block, m.by && "received by " + m.by].filter(Boolean).join(" · ");
+    const note = m.note ? `<span class="muted" style="display:block;font-style:italic">Comment: ${esc(m.note)}</span>` : "";
     const thumbs = (m.photos || []).map(id => `<img class="thumb" data-photo="${esc(id)}" data-move="${esc(m.id)}" alt="Photo">`).join("");
     return `<div class="move ${t.cls}"><span class="t">${esc(m.time)}</span>
-      <span class="what"><b>${esc(m.qty)} × ${esc(m.item)} – ${esc(t.label)}${t.rig && m.rig ? " – " + esc(m.rig) : ""}</b><span class="muted">${esc(detail)}</span>
+      <span class="what"><b>${esc(m.qty)} × ${esc(m.item)} – ${esc(t.label)}${t.rig && m.rig ? " – " + esc(m.rig) : ""}</b><span class="muted">${esc(detail)}</span>${note}
         ${thumbs || !ro ? `<span class="thumbs">${thumbs}${ro ? "" : `<button class="ghost addph" data-addphoto="${esc(m.id)}">+ Photo</button>`}</span>` : ""}</span>
       ${ro ? "" : `<button class="ghost" data-del="${esc(m.id)}">Remove</button>`}</div>`;
   }).join("") || `<div class="muted">No movements yet. Add one line every time GET goes on or off the bakkie.</div>`;
@@ -314,6 +317,7 @@ function renderShift() {
           <label>Old item no. back <input id="mOld" placeholder="Worn item no." ${off}></label>
           <label>Block / hole no. <input id="mBlock" placeholder="Block / hole" ${off}></label>
           <label>Received by <input id="mBy" placeholder="Name" ${off}></label>
+          <label style="grid-column:1/-1">Comment (optional) <textarea id="mNote" rows="2" placeholder="Type anything, for example 20 L hydraulic oil to TDR 015" ${off}></textarea></label>
           <div style="grid-column:1/-1">
             <span class="muted">Photos (optional), for example of the stock received from the store</span>
             <div class="thumbs" style="margin-top:6px">${draftPhotos.map((p, i) => `<img class="thumb" data-draft="${i}" alt="New photo">`).join("")}
@@ -345,6 +349,11 @@ function renderShift() {
         <label>GET operator ${field("signOperator", s.signOperator, 'placeholder="Full name"')}</label>
         <label>Shift supervisor ${field("signSupervisor", s.signSupervisor, 'placeholder="Full name"')}</label>
         <label>Store controller (items back) ${field("signStore", s.signStore, 'placeholder="Full name"')}</label>
+      </div>
+      <div style="margin-top:12px">
+        <span class="muted">Photo of anything signed (optional), for example the signed shift sheet or delivery note</span>
+        <div class="thumbs" style="margin-top:6px">${(s.signPhotos || []).map(id => `<img class="thumb" data-photo="${esc(id)}" data-move="sign" alt="Signed sheet">`).join("")}
+          ${ro ? "" : `<button type="button" class="ghost addph" data-addphoto="sign">+ Photo</button>`}</div>
       </div>
       <div class="row" style="margin-top:12px;justify-content:space-between">
         ${s.closed ? `<span></span><button id="reopen">Reopen shift</button>` : `<button class="danger" id="delShift">Delete shift</button><button class="primary" id="close">Close shift</button>`}
@@ -408,7 +417,7 @@ async function buildBrandedGET(list, who, photoBlob = async id => (await store.p
   };
   const title = (ws, rowNo, text) => { const c = ws.getCell(rowNo, 1); c.value = text; c.font = { name: "Arial", size: 12, bold: true, color: { argb: XC.BLACK } }; ws.getRow(rowNo).height = 22; };
   const freeze = (ws, y) => { ws.views = [{ state: "frozen", ySplit: y, showGridLines: false }]; };
-  const nPhotos = rows.reduce((n, { m }) => n + (m.photos || []).length, 0);
+  const nPhotos = list.reduce((n, x) => n + allPhotos(x).length, 0);
 
   // Sum up
   const t = {}; ITEMS.forEach(i => t[i] = { received: 0, fitted: 0, returned: 0, back: 0, lost: 0 });
@@ -439,25 +448,33 @@ async function buildBrandedGET(list, who, photoBlob = async id => (await store.p
   r++; const note = ws1.getCell(r, 1); note.value = `Exported ${new Date().toLocaleString("en-ZA")}${who ? " · " + who : ""}`; note.font = { name: "Arial", size: 9, italic: true, color: { argb: XC.MUTED } };
 
   // Movements with photo thumbnails
-  const ws2 = sheet("Movements", [11, 8, 6, 8, 9, 22, 10, 14, 6, 12, 13, 13, 16, 18, 14, 14, 14, 14], "GET Bakkie Log – Movements");
-  header(ws2, 7, ["Date", "Shift", "Trip", "Time", "On board", "Movement", "Rig", "Item", "Qty", "Item no.", "Old no. back", "Block / hole", "Received by", "Logged by", "GET operator", "Photo", "Photo", "Photo"]);
+  const ws2 = sheet("Movements", [11, 8, 6, 8, 9, 22, 10, 14, 6, 12, 13, 13, 16, 30, 18, 14, 14, 14, 14], "GET Bakkie Log – Movements");
+  header(ws2, 7, ["Date", "Shift", "Trip", "Time", "On board", "Movement", "Rig", "Item", "Qty", "Item no.", "Old no. back", "Block / hole", "Received by", "Comment", "Logged by", "GET operator", "Photo", "Photo", "Photo"]);
   r = 8; let k = 0; const photoList = [];
   for (const { s, m } of rows) {
     const ph = m.photos || [], names = photoNames(s, m);
-    const row = line(ws2, r, [fmtDate(s.date), s.shift, tripNo(s, m.trip) || "", m.time || "", m.onBoard || "", TYPES[m.type]?.label || m.type, m.rig || "", m.item, Number(m.qty) || 0, m.itemNo || "", m.oldNo || "", m.block || "", m.by || "", m.loggedBy || "", s.operator || "", "", "", ""], k++, { h: ph.length ? 60 : 20 });
+    const row = line(ws2, r, [fmtDate(s.date), s.shift, tripNo(s, m.trip) || "", m.time || "", m.onBoard || "", TYPES[m.type]?.label || m.type, m.rig || "", m.item, Number(m.qty) || 0, m.itemNo || "", m.oldNo || "", m.block || "", m.by || "", m.note || "", m.loggedBy || "", s.operator || "", "", "", ""], k++, { h: ph.length ? 60 : 20 });
     row.getCell(6).fill = fill(MOVE_FILL[m.type] || XC.CREAM); row.getCell(6).font = { name: "Arial", size: 10, bold: true };
     for (let i = 0; i < ph.length; i++) {
       const blob = await photoBlob(ph[i]); if (!blob) continue;
       const buf = await blob.arrayBuffer(), img = wb.addImage({ buffer: buf, extension: "jpeg" });
       let w = 1, h = 1; try { const bm = await createImageBitmap(blob); w = bm.width; h = bm.height; bm.close?.(); } catch {}
       photoList.push({ img, w, h, cap: `${fmtDate(s.date)} ${s.shift} ${m.time || ""} · ${TYPES[m.type]?.label || m.type} · ${m.qty} × ${m.item}${m.itemNo ? " · No. " + m.itemNo : ""}${m.rig ? " · " + m.rig : ""}`, name: names[i] });
-      if (i < 3) { const th = 72, tw = Math.min(96, Math.round(th * w / h)); ws2.addImage(img, { tl: { col: 15 + i + 0.05, row: r - 1 + 0.05 }, ext: { width: tw, height: th } }); }
+      if (i < 3) { const th = 72, tw = Math.min(96, Math.round(th * w / h)); ws2.addImage(img, { tl: { col: 16 + i + 0.05, row: r - 1 + 0.05 }, ext: { width: tw, height: th } }); }
     }
-    if (ph.length > 3) row.getCell(18).note = `${ph.length} photos – all are on the Photos sheet`;
+    if (ph.length > 3) row.getCell(19).note = `${ph.length} photos – all are on the Photos sheet`;
     r++;
   }
   if (!rows.length) { ws2.getCell("A8").value = "No movements in this period."; ws2.getCell("A8").font = { name: "Arial", italic: true, color: { argb: XC.MUTED } }; }
-  freeze(ws2, 7); if (rows.length) ws2.autoFilter = { from: "A7", to: `O${r - 1}` };
+  freeze(ws2, 7); if (rows.length) ws2.autoFilter = { from: "A7", to: `P${r - 1}` };
+
+  // photos of the signed sheets go on the Photos sheet too
+  for (const x of chron) for (const id of x.signPhotos || []) {
+    const blob = await photoBlob(id); if (!blob) continue;
+    const img = wb.addImage({ buffer: await blob.arrayBuffer(), extension: "jpeg" });
+    let w = 1, h = 1; try { const bm = await createImageBitmap(blob); w = bm.width; h = bm.height; bm.close?.(); } catch {}
+    photoList.push({ img, w, h, cap: `${fmtDate(x.date)} ${x.shift} · Signed sheet${x.operator ? " · " + x.operator : ""}` });
+  }
 
   // Photos sheet, large
   const ws3 = sheet("Photos", [52, 4, 52], "GET Bakkie Log – Photos");
@@ -471,9 +488,9 @@ async function buildBrandedGET(list, who, photoBlob = async id => (await store.p
   });
 
   // Shifts
-  const ws4 = sheet("Shifts", [11, 8, 18, 11, 16, 11, 11, 7, 16, 16, 10, 15, 24, 10, 24, 16, 16, 16, 9], "GET Bakkie Log – Shifts");
-  header(ws4, 7, ["Date", "Shift", "GET operator", "Bakkie no.", "Supervisor", "First out of store", "Last back at store", "Trips", "Handed over by", "Taken over by", "Handover time", "Counts checked", "Handover notes", "Movements", "Comments", "Signed GET operator", "Signed supervisor", "Signed store controller", "Status"]);
-  chron.forEach((x, n) => { const h = x.handover || {}; line(ws4, 8 + n, [fmtDate(x.date), x.shift, x.operator || "", x.bakkie || "", x.supervisor || "", x.timeOut || "", x.timeBack || "", tripsOf(x).length, h.handedBy || "", h.takenBy || "", h.time || "", h.checked || "", h.notes || "", (x.moves || []).length, x.comments || "", x.signOperator || "", x.signSupervisor || "", x.signStore || "", x.closed ? "Closed" : "Open"], n); });
+  const ws4 = sheet("Shifts", [11, 8, 18, 11, 16, 11, 11, 7, 16, 16, 10, 15, 24, 10, 24, 16, 16, 16, 11, 9], "GET Bakkie Log – Shifts");
+  header(ws4, 7, ["Date", "Shift", "GET operator", "Bakkie no.", "Supervisor", "First out of store", "Last back at store", "Trips", "Handed over by", "Taken over by", "Handover time", "Counts checked", "Handover notes", "Movements", "Comments", "Signed GET operator", "Signed supervisor", "Signed store controller", "Signed sheet photos", "Status"]);
+  chron.forEach((x, n) => { const h = x.handover || {}; line(ws4, 8 + n, [fmtDate(x.date), x.shift, x.operator || "", x.bakkie || "", x.supervisor || "", x.timeOut || "", x.timeBack || "", tripsOf(x).length, h.handedBy || "", h.takenBy || "", h.time || "", h.checked || "", h.notes || "", (x.moves || []).length, x.comments || "", x.signOperator || "", x.signSupervisor || "", x.signStore || "", (x.signPhotos || []).length, x.closed ? "Closed" : "Open"], n); });
   freeze(ws4, 7);
 
   // Trips
@@ -505,6 +522,7 @@ async function buildBrandedGET(list, who, photoBlob = async id => (await store.p
 async function packExport(out, list, photoBlob, base) {
   const xlsx = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   const items = []; logRows(list).forEach(({ s, m }) => { const names = photoNames(s, m); (m.photos || []).forEach((id, i) => items.push([id, names[i]])); });
+  list.forEach(x => { const names = signNames(x); (x.signPhotos || []).forEach((id, i) => items.push([id, names[i]])); });
   if (!items.length) return { blob: xlsx, name: base + ".xlsx" };
   await loadLib("../lib/jszip.min.js");
   const zip = new JSZip(); zip.file(base + ".xlsx", xlsx); const folder = zip.folder("Photos");
@@ -617,9 +635,9 @@ app.addEventListener("click", async e => {
   if (t.id === "keepExported") { lastExport = null; render(); return; }
   if (t.id === "clearExported") {
     const list = clearable();
-    const nPh = list.reduce((n, s) => n + (s.moves || []).reduce((k, m) => k + (m.photos || []).length, 0), 0);
+    const nPh = list.reduce((n, s) => n + allPhotos(s).length, 0);
     if (!confirm(`Clear ${list.length} shift${list.length === 1 ? "" : "s"}${nPh ? ` and ${nPh} photo${nPh === 1 ? "" : "s"}` : ""} from this tablet? This cannot be undone. Only do this if the exported file arrived.`)) return;
-    for (const s of list) { await store.del(s.id); await deletePhotos((s.moves || []).flatMap(m => m.photos || [])); }
+    for (const s of list) { await store.del(s.id); await deletePhotos(allPhotos(s)); }
     const gone = new Set(list.map(s => s.id)); shifts = shifts.filter(s => !gone.has(s.id));
     lastExport = null; render(); alert(`${list.length} shift${list.length === 1 ? "" : "s"} cleared.`); return;
   }
@@ -629,7 +647,7 @@ app.addEventListener("click", async e => {
     if (!canExport()) { alert("Making a backup file needs admin. Go to Movement log to ask admin."); return; }
     t.disabled = true; t.textContent = "Making backup…";
     const photos = [];
-    for (const s of shifts) for (const m of s.moves || []) for (const id of m.photos || []) { const p = await store.photo(id); if (p) photos.push({ id, data: await blobToDataURL(p.blob) }); }
+    for (const s of shifts) for (const id of allPhotos(s)) { const p = await store.photo(id); if (p) photos.push({ id, data: await blobToDataURL(p.blob) }); }
     const blob = new Blob([JSON.stringify({ app: "tkr-get-bakkie-log", version: 2, made: new Date().toISOString(), shifts, photos })], { type: "application/json" });
     const r = await shareOrDownload(blob, `TKR_GET_Bakkie_Log_Backup_${fmtDate(isoDate(new Date())).replace(/\//g, "-")}.json`);
     if (r !== "cancelled") localSet("lastBackup", fmtDate(isoDate(new Date())) + " " + nowHM());
@@ -644,7 +662,7 @@ app.addEventListener("click", async e => {
   }
   if (t.id === "delShift") {
     if (!confirm("Delete this whole shift and all its movements and photos? This cannot be undone.")) return;
-    await store.del(current.id); await deletePhotos((current.moves || []).flatMap(m => m.photos || [])); markDelShift(current.id, (current.moves || []).flatMap(m => m.photos || []));
+    await store.del(current.id); await deletePhotos(allPhotos(current)); markDelShift(current.id, allPhotos(current));
     shifts = shifts.filter(x => x.id !== current.id); clearDrafts(); current = null; render(); return;
   }
   if (t.id === "close") {
@@ -665,7 +683,7 @@ app.addEventListener("change", async e => {
       if (data.app !== "tkr-get-bakkie-log" || !Array.isArray(data.shifts)) throw new Error();
       const have = new Set(shifts.map(s => s.id)), add = data.shifts.filter(s => s && s.id && !have.has(s.id));
       if (!confirm(`This backup has ${data.shifts.length} shifts. ${add.length} are not on this device yet and will be added. Shifts already here stay as they are. Continue?`)) return;
-      const need = new Set(add.flatMap(s => (s.moves || []).flatMap(m => m.photos || [])));
+      const need = new Set(add.flatMap(allPhotos));
       for (const p of data.photos || []) if (need.has(p.id)) await store.putPhoto({ id: p.id, blob: await dataURLToBlob(p.data) });
       for (const s of add) await store.put(s);
       shifts = await store.all(); render(); $("#backupMsg").textContent = add.length + " shifts restored.";
@@ -694,7 +712,7 @@ app.addEventListener("submit", async e => {
   const type = $("#mType").value, qty = Number($("#mQty").value);
   if (!Number.isInteger(qty) || qty <= 0) { $("#moveErr").textContent = "Type the quantity as a whole number, for example 1."; return; }
   const m = { id: newId(), loggedBy: opNow?.name || "", trip: $("#mTrip")?.value || "", type, item: $("#mItem").value, qty, time: $("#mTime").value || nowHM(), onBoard: $("#mOnBoard").value,
-    rig: TYPES[type].rig ? $("#mRig").value : "", itemNo: $("#mNo").value.trim(), oldNo: $("#mOld").value.trim(), block: $("#mBlock").value.trim(), by: $("#mBy").value.trim() };
+    rig: TYPES[type].rig ? $("#mRig").value : "", itemNo: $("#mNo").value.trim(), oldNo: $("#mOld").value.trim(), block: $("#mBlock").value.trim(), by: $("#mBy").value.trim(), note: ($("#mNote")?.value || "").trim() };
   if (type === "fitted" || type === "back") {
     const b = balance(current)[m.item];
     if (qty > b.end) { $("#moveErr").textContent = `Only ${b.end} ${m.item.toLowerCase()} in the bakkie. Log what came from the store first.`; return; }
@@ -717,7 +735,7 @@ $("#camera").addEventListener("change", async e => {
   try {
     const blobs = []; for (const f of files) blobs.push(await shrinkPhoto(f));
     if (photoTarget) {
-      const m = (current.moves || []).find(x => x.id === photoTarget); if (!m) return;
+      const m = photoTarget === "sign" ? { photos: current.signPhotos = current.signPhotos || [] } : (current.moves || []).find(x => x.id === photoTarget); if (!m) return;
       m.photos = m.photos || [];
       for (const b of blobs) { const id = newId(); await store.putPhoto({ id, blob: b }); m.photos.push(id); }
       await save("Photo added");
@@ -731,6 +749,7 @@ $("#viewerClose").addEventListener("click", () => { $("#viewer").hidden = true; 
 $("#viewerDel").addEventListener("click", async () => {
   if (!viewing || !confirm("Delete this photo?")) return;
   if (viewing.draft !== undefined) { const [p] = draftPhotos.splice(viewing.draft, 1); if (p) URL.revokeObjectURL(p.url); }
+  else if (viewing.move === "sign") { current.signPhotos = (current.signPhotos || []).filter(id => id !== viewing.id); await save("Photo deleted"); await deletePhotos([viewing.id]); markDelPhotos([viewing.id]); }
   else { const m = (current.moves || []).find(x => x.id === viewing.move); if (m) { m.photos = (m.photos || []).filter(id => id !== viewing.id); await save("Photo deleted"); await deletePhotos([viewing.id]); markDelPhotos([viewing.id]); } }
   $("#viewer").hidden = true; viewing = null; render();
 });
@@ -768,7 +787,7 @@ async function syncNow() {
   await fbAuth.authStateReady?.(); if (fbAuth.currentUser?.uid !== opNow.uid) return;
   syncing = true;
   try {
-    const shiftOf = pid => shifts.find(x => (x.moves || []).some(m => (m.photos || []).includes(pid)));
+    const shiftOf = pid => shifts.find(x => allPhotos(x).includes(pid));
     for (const id of [...dirty.delPhotos]) { await fb.deleteDoc(fb.doc(fbDb, "getPhotos", id)); dirty.delPhotos = dirty.delPhotos.filter(x => x !== id); }
     for (const id of [...dirty.delShifts]) { await fb.deleteDoc(fb.doc(fbDb, "getShifts", id)); dirty.delShifts = dirty.delShifts.filter(x => x !== id); }
     for (const id of [...dirty.shifts]) {
