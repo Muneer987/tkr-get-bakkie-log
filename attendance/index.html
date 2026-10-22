@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Attendance · TKR</title>
+<meta name="theme-color" content="#0a0907">
+<link rel="manifest" href="../manifest.webmanifest">
+<link rel="icon" href="../icons/icon-192.png">
+<link rel="apple-touch-icon" href="../icons/maskable-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="TKR">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="att.css">
+<script src="../lib/xlsx.full.min.js" defer></script>
+</head>
+<body>
+<header>
+  <div class="wrap hrow">
+    <div class="brand"><a href="../" class="home" aria-label="TKR home">‹</a><img src="../icons/logo-96.png" alt=""><b>TKR</b><span>Attendance</span></div>
+    <div class="ctl" id="appBar" hidden>
+      <label for="date">Date</label>
+      <button class="nav" id="prev" aria-label="Previous day">‹</button>
+      <input type="date" id="date">
+      <button class="nav" id="next" aria-label="Next day">›</button>
+      <button class="cycle" id="cycleLbl" type="button" aria-label="Change cycle dates"></button>
+    </div>
+    <div class="ctl"><button class="hbtn" id="outBtn" type="button" hidden>Sign out</button></div>
+  </div>
+  <div class="wrap"><nav class="tabs" role="tablist" id="tabs" hidden>
+    <button role="tab" data-v="mark" aria-selected="true">Mark</button>
+    <button role="tab" data-v="daily" aria-selected="false">Daily report</button>
+    <button role="tab" data-v="cycle" aria-selected="false">Cycle report</button>
+    <button role="tab" data-v="flags" aria-selected="false">Flags</button>
+    <button role="tab" data-v="export" aria-selected="false">Excel export</button>
+    <button role="tab" data-v="people" aria-selected="false">Employees</button>
+    <button role="tab" data-v="users" aria-selected="false" id="usersTab" hidden>Users</button>
+  </nav></div>
+</header>
+<main class="wrap" id="signin" hidden>
+  <form class="signin" id="signForm">
+    <h2>Sign in</h2>
+    <p class="note" style="margin:0">Use the email and password you were given for the TKR app.</p>
+    <label for="sEmail">Email</label><input id="sEmail" type="email" autocomplete="username" required>
+    <label for="sPass">Password</label><input id="sPass" type="password" autocomplete="current-password" required>
+    <button class="btn gold" type="submit" id="sBtn">Sign in</button>
+    <button class="btn" type="button" id="forgot">Forgot password</button>
+    <p class="note" id="sMsg" role="status"></p>
+  </form>
+</main>
+<main class="wrap" id="main"><div class="empty"><b>Opening TKR Attendance</b>Loading.</div></main>
+<div id="sheetHost"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
