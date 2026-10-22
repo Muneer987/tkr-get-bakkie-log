@@ -438,10 +438,21 @@ function preset(type,anchor){const d=parse(anchor);
   return [S.exp.from||anchor,S.exp.to||anchor]}
 const EXC=["AWOP","SICK","ANNUAL LEAVE","FAMILY RESPONSIBILITY","FAMILY EMERGENCY","STUDY LEAVE","MATERNITY LEAVE"];
 function periodText(f,t){const n=rangeDates(f,t).length;return (f===t?nice(f)+" "+yr(f):nice(f)+" "+yr(f)+" to "+nice(t)+" "+yr(t))+" · "+n+(n===1?" day":" days")}
+function xlsEmployees(){const act=activeEmps().slice().sort((a,b)=>SHEETS.indexOf(a.sheet)-SHEETS.indexOf(b.sheet)||a.order-b.order),gone=(S.emps||[]).filter(e=>e.active===false);
+  if(!act.length&&!gone.length){toast("There are no employees to download");return}
+  const head=["Sheet","Shift group","Employee","Number","Department","Job Title"],row=e=>[e.sheet,groupLabel(e),e.name,e.number||"",e.dept||"",e.title||""],cols=[{wch:16},{wch:24},{wch:32},{wch:12},{wch:18},{wch:30}];
+  const wb=XLSX.utils.book_new();const add=(name,aoa,c)=>{const ws=XLSX.utils.aoa_to_sheet(aoa);ws["!cols"]=c;XLSX.utils.book_append_sheet(wb,ws,name.slice(0,31))};
+  const title="TKR Operations – Employee list – "+nice(iso(new Date()))+" "+yr(iso(new Date()));
+  add("All employees",[[title],["Employees on the register: "+act.length],[],head].concat(act.map(row)),cols);
+  SHEETS.forEach(sh=>{const es=act.filter(e=>e.sheet===sh);if(es.length)add(sh,[[sh+" – "+es.length+" employees"],[],head].concat(es.map(row)),cols)});
+  if(gone.length)add("Removed",[["Removed employees – "+gone.length],[],head.concat(["Reason","Last working day"])].concat(gone.map(e=>row(e).concat([e.leftReason||"",e.leftDate?fmtD(e.leftDate):""]))),cols.concat([{wch:14},{wch:16}]));
+  saveFile("TKR Employee list "+iso(new Date())+".xlsx",wb)}
+const fmtD=s=>{const [y,m,d]=s.split("-");return d+"/"+m+"/"+y};
 function viewExport(){const E=S.exp;if(!E.from){[E.from,E.to]=preset(E.type,S.date)}
   const key=E.from+"|"+E.to;if(E.key!==key){E.key=key;E.loading=true;loadRange(E.from,E.to).then(()=>{E.loading=false;if(S.view==="export")render()},e=>{E.loading=false;toast("Could not load those dates: "+(e.message||"try again"))})}
   const dates=rangeDates(E.from,E.to);const es=inPeriod(E.from);
-  let h='<div class="bar" role="group" aria-label="Report period">'+PRESETS.map(([k,l])=>'<button class="chip" data-exp="'+k+'" aria-pressed="'+(E.type===k)+'">'+l+'</button>').join("")+'</div>';
+  let h='<div class="list" style="margin-bottom:14px"><h3>Employee list</h3><p class="note" style="margin:0 0 8px">Everyone on the register with their sheet, shift group, number, department and job title, one tab per sheet. Removed employees are on their own tab.</p><button class="btn gold" id="xlsEmps">Download employee list</button></div>';
+  h+='<div class="bar" role="group" aria-label="Report period">'+PRESETS.map(([k,l])=>'<button class="chip" data-exp="'+k+'" aria-pressed="'+(E.type===k)+'">'+l+'</button>').join("")+'</div>';
   h+='<div class="form"><label>From<input type="date" id="exp-from" value="'+E.from+'"></label><label>To<input type="date" id="exp-to" value="'+E.to+'"></label>'+
     '<div style="display:flex;align-items:end"><button class="btn gold" id="xlsRange"'+(E.loading?" disabled":"")+'>Download Excel</button></div></div>';
   h+='<h2 class="sheet-h">Attendance report <small>'+periodText(E.from,E.to)+'</small></h2>';
@@ -544,6 +555,7 @@ main.addEventListener("click",ev=>{const t=ev.target.closest("button");if(!t)ret
   if(t.id==="xlsCycle"){const c=cycleOf(S.date);xlsRange(c.start,c.end);return}
   if(t.id==="xlsDaily"){xlsRange(S.date,S.date);return}
   if(t.dataset.exp){S.exp.type=t.dataset.exp;if(t.dataset.exp!=="custom")[S.exp.from,S.exp.to]=preset(t.dataset.exp,S.exp.from||S.date);render();return}
+  if(t.id==="xlsEmps"){xlsEmployees();return}
   if(t.id==="xlsRange"){xlsRange(S.exp.from,S.exp.to);return}
   if(t.dataset.flg){const F=S.flg;F.type=t.dataset.flg;if(F.type!=="custom")[F.from,F.to]=preset(F.type,F.from||S.date);render();return}
   if(t.dataset.kind){S.flg.kind=t.dataset.kind;render();return}
