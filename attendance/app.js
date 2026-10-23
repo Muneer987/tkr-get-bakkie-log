@@ -463,7 +463,66 @@ async function xlsFlags(from,to){try{await loadRange(from,to)}catch(e){toast("Co
   XLSX.utils.book_append_sheet(wb,ws,"Flags");saveFile("TKR Attendance Flags "+(kind==="all"?"":kl+" ")+(from===to?from:from+" to "+to)+".xlsx",wb)}
 
 // ---------- excel ----------
-function saveFile(name,wb){try{XLSX.writeFile(wb,name)}catch(e){toast("Download failed: "+(e.message||"try again"))}}
+// Every download goes through here: the sheets are built as rows, then written as a TKR-branded Excel (logo, black and gold).
+function saveFile(name,wb){brandedSave(name,wb).catch(e=>{try{XLSX.writeFile(wb,name);toast("Downloaded without the TKR layout: "+(e.message||"the Excel styler did not load"))}catch(x){toast("Download failed: "+(x.message||"try again"))}})}
+const loadScript=src=>new Promise((res,rej)=>{if(window.ExcelJS)return res();const el=document.createElement("script");el.src=src;el.onload=res;el.onerror=()=>rej(new Error("open the app once with signal"));document.head.appendChild(el)});
+let logoBuf=null;
+const XB={BLACK:"FF111111",HEAD:"FF262626",GROUP:"FF3A3A3A",GOLD:"FFD4A12A",CREAM:"FFFFF8E6",TOT:"FFFFF2CC",WHITE:"FFFFFFFF",GRID:"FFD9D3C5",MUTED:"FF6B6558",
+  RED:"FF9C0006",REDF:"FFFDE2DF",BLUE:"FF1F4E79",BLUEF:"FFDDEBF7",GREY:"FF8A8578",NIGHT:"FF6EA7DA"};
+const LEAVE_CODES=["ANNUAL LEAVE","FAMILY RESPONSIBILITY","FAMILY EMERGENCY","STUDY LEAVE"],BAD_CODES=["AWOP","SICK","MATERNITY LEAVE"];
+async function brandedSave(name,wbIn){toast("Preparing the Excel…");await loadScript("../lib/exceljs.min.js");
+  if(!logoBuf){try{logoBuf=await (await fetch("../icons/icon-512.png")).arrayBuffer()}catch(e){logoBuf=null}}
+  const X=new ExcelJS.Workbook();X.creator="TKR Operations";X.created=new Date();
+  const logo=logoBuf?X.addImage({buffer:logoBuf,extension:"png"}):null;
+  const thin={style:"thin",color:{argb:XB.GRID}},box={top:thin,left:thin,bottom:thin,right:thin};
+  const fill=c=>({type:"pattern",pattern:"solid",fgColor:{argb:c}});
+  for(const sn of wbIn.SheetNames){const src=wbIn.Sheets[sn];const aoa=XLSX.utils.sheet_to_json(src,{header:1,raw:true,defval:""});
+    const fmt={};for(const k in src){if(k[0]!=="!"&&src[k].z&&String(src[k].z).includes("%")){const c=XLSX.utils.decode_cell(k);fmt[c.r+"|"+c.c]=src[k].z}}
+    const ncols=Math.max(6,...aoa.map(r=>r.length));const widths=(src["!cols"]||[]).map(c=>c&&c.wch||10);
+    const ws=X.addWorksheet(sn.slice(0,31),{views:[{showGridLines:false}],pageSetup:{orientation:"landscape",fitToPage:true,fitToWidth:1,fitToHeight:0,paperSize:9}});
+    ws.columns=Array.from({length:ncols},(_,i)=>({width:Math.max(widths[i]||10,i===0?26:6)}));
+    // brand band
+    for(let r=1;r<=4;r++){ws.getRow(r).height=r===1?8:20;for(let c=1;c<=ncols;c++)ws.getCell(r,c).fill=fill(XB.BLACK)}
+    ws.getRow(5).height=4;for(let c=1;c<=ncols;c++)ws.getCell(5,c).fill=fill(XB.GOLD);
+    if(logo!==null)ws.addImage(logo,{tl:{col:0.08,row:1.08},ext:{width:56,height:56}});
+    const title=String((aoa[0]||[])[0]||sn);
+    const tc=ws.getCell(2,2);tc.value=title;tc.font={name:"Arial",size:15,bold:true,color:{argb:XB.WHITE}};tc.alignment={vertical:"middle"};
+    const sc=ws.getCell(3,2);sc.value="TKR OPERATIONS  ·  THARISA MINE";sc.font={name:"Arial",size:9,bold:true,color:{argb:XB.GOLD}};sc.alignment={vertical:"middle"};
+    const dc=ws.getCell(4,2);dc.value="Downloaded "+nice(iso(new Date()))+" "+yr(iso(new Date()))+(email?"  ·  "+email:"");dc.font={name:"Arial",size:9,color:{argb:"FFCFC8B8"}};dc.alignment={vertical:"middle"};
+    // find the header row: first row after the title with 3 or more filled cells, all text
+    let hi=aoa.findIndex((r,i)=>i>0&&r.filter(v=>v!==""&&v!=null).length>=3&&r.every(v=>v===""||typeof v==="string"));if(hi<0)hi=aoa.length;
+    let out=7;
+    for(let i=1;i<hi;i++){const r=aoa[i];if(!r||!r.some(v=>v!==""))continue;const c=ws.getCell(out,1);
+      if(r.length>=2&&r[1]!==""){c.value=String(r[0]);c.font={name:"Arial",size:10,bold:true,color:{argb:XB.MUTED}};const v=ws.getCell(out,2);v.value=r.slice(1).join(" ");v.font={name:"Arial",size:10,color:{argb:XB.BLACK}}}
+      else{c.value=String(r[0]);c.font={name:"Arial",size:10,italic:true,color:{argb:XB.MUTED}}}out++}
+    if(hi>=aoa.length){freezeAt(ws,5);continue}
+    out++;const headRowNo=out;const head=aoa[hi];const hr=ws.getRow(out);hr.height=30;
+    for(let c=0;c<ncols;c++){const cell=hr.getCell(c+1);cell.value=head[c]??"";cell.font={name:"Arial",size:10,bold:true,color:{argb:XB.WHITE}};cell.fill=fill(XB.HEAD);cell.border=box;cell.alignment={vertical:"middle",horizontal:c?"center":"left",wrapText:true}}
+    out++;let k=0,ended=false;
+    for(let i=hi+1;i<aoa.length;i++){const r=aoa[i]||[];const filled=r.filter(v=>v!==""&&v!=null).length;
+      if(!filled){ended=true;out++;continue}
+      const row=ws.getRow(out);
+      if(ended||(filled===1&&String(r[0]).length>60)){const c=row.getCell(1);c.value=String(r[0]);c.font={name:"Arial",size:9,italic:true,color:{argb:XB.MUTED}};out++;continue}
+      const isTot=String(r[0]).trim().toLowerCase()==="total";
+      const isGroup=!isTot&&r[0]!==""&&r.slice(1,4).every(v=>v===""||v==null)&&r.slice(4).every(v=>v===""||["DAY","NIGHT","OFF"].includes(v));
+      row.height=isGroup?20:18;
+      for(let c=0;c<ncols;c++){const v=r[c]===undefined?"":r[c];const cell=row.getCell(c+1);cell.value=v===""?null:v;cell.border=box;
+        cell.font={name:"Arial",size:10,bold:isTot||isGroup||c===0&&false,color:{argb:isGroup?XB.WHITE:XB.BLACK}};
+        cell.alignment={vertical:"middle",horizontal:typeof v==="number"||(c>0&&typeof v==="string"&&/^[A-Z0-9 :.%×\u00d7-]+$/.test(v)&&v.length<=22&&!/^[A-Z]-/.test(v))?"center":"left",wrapText:c<=5,shrinkToFit:c>5&&typeof v==="string"&&v.length>6};
+        if(isGroup){cell.fill=fill(XB.GROUP);if(v==="DAY")cell.font={name:"Arial",size:9,bold:true,color:{argb:XB.GOLD}};else if(v==="NIGHT")cell.font={name:"Arial",size:9,bold:true,color:{argb:XB.NIGHT}};else if(v==="OFF")cell.font={name:"Arial",size:9,color:{argb:"FFBDB6A8"}}}
+        else if(isTot){cell.fill=fill(XB.TOT);cell.border={top:{style:"medium",color:{argb:XB.GOLD}},left:thin,bottom:thin,right:thin}}
+        else{if(k%2)cell.fill=fill(XB.CREAM);
+          if(typeof v==="string"&&c>0){const u=v.toUpperCase();
+            if(BAD_CODES.includes(u)){cell.fill=fill(XB.REDF);cell.font={name:"Arial",size:10,bold:true,color:{argb:XB.RED}}}
+            else if(LEAVE_CODES.includes(u)){cell.fill=fill(XB.BLUEF);cell.font={name:"Arial",size:10,color:{argb:XB.BLUE}}}
+            else if(u==="OFF")cell.font={name:"Arial",size:10,color:{argb:XB.GREY}};
+            else if(["RESIGNED","ABSCONDED","SUSPENDED"].includes(u))cell.font={name:"Arial",size:10,italic:true,color:{argb:XB.MUTED}}}}
+        const z=fmt[i+"|"+c];if(z&&typeof v==="number"){cell.numFmt=z;if(v<0.9&&!isGroup)cell.font=Object.assign({},cell.font,{color:{argb:XB.RED},bold:true})}}
+      if(!isGroup&&!isTot)k++;out++}
+    freezeAt(ws,headRowNo)}
+  const buf=await X.xlsx.writeBuffer();const blob=new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1500);toast("Excel downloaded")}
+function freezeAt(ws,row){ws.views=[{state:"frozen",ySplit:row,xSplit:row>5?1:0,showGridLines:false}]}
 const yr=d=>parse(d).getFullYear();
 function rangeDates(from,to){const out=[];for(let x=from;x<=to&&out.length<400;x=addDays(x,1))out.push(x);return out}
 const PRESETS=[["daily","Daily"],["weekly","Weekly"],["cycle","Cycle"],["month","Calendar month"],["custom","Custom dates"]];
