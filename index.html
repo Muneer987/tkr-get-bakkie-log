@@ -54,6 +54,8 @@ document.getElementById("sections").innerHTML = SECTIONS.map(s => `<a class="sec
 let installEvt = null;
 addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; installBtn.hidden = false; });
 installBtn.onclick = async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; installBtn.hidden = true; };
+// A new version of the app was installed: load it straight away instead of on the next open.
+if("serviceWorker" in navigator&&navigator.serviceWorker.controller){let reloaded=false;navigator.serviceWorker.addEventListener("controllerchange",()=>{if(reloaded)return;reloaded=true;location.reload()})}
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(r => r.update()).catch(() => {});
 </script>
 </body>

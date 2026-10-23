@@ -471,5 +471,7 @@ async function brandedWorkbook(list, from, to, names) {
   return await wb.xlsx.writeBuffer();
 }
 
+// A new version of the app was installed: load it straight away instead of on the next open.
+if("serviceWorker" in navigator&&navigator.serviceWorker.controller){let reloaded=false;navigator.serviceWorker.addEventListener("controllerchange",()=>{if(reloaded)return;reloaded=true;location.reload()})}
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("../sw.js", { scope: "../", updateViaCache: "none" }).then(r => r.update()).catch(() => {});
 render();

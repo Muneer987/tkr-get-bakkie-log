@@ -691,4 +691,6 @@ q("forgot").onclick=async()=>{const em=q("sEmail").value.trim();const m=q("sMsg"
   try{await sendPasswordResetEmail(auth,em);m.textContent="A password reset email was sent to "+em+"."}catch(e){m.textContent="The reset email couldn't be sent. Ask admin."}};
 q("outBtn").onclick=()=>signOut(auth).then(()=>location.reload());
 let installEvt=null;
+// A new version of the app was installed: load it straight away instead of on the next open.
+if("serviceWorker" in navigator&&navigator.serviceWorker.controller){let reloaded=false;navigator.serviceWorker.addEventListener("controllerchange",()=>{if(reloaded)return;reloaded=true;location.reload()})}
 if("serviceWorker" in navigator)navigator.serviceWorker.register("../sw.js",{scope:"../",updateViaCache:"none"}).then(r=>r.update()).catch(()=>{});
