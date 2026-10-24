@@ -39,8 +39,8 @@ const lsGet = k => { try { return localStorage.getItem(k); } catch { return null
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 
 /* ---------- what the stores hold ---------- */
-const STORES = { drill: { name: "Drill Stores", sheet: "TDR Drill Rigs", sub: "Drill rigs (TDR) · now at the Rompad, but its own store", machines: ["TDR013", "TDR014", "TDR015", "TDR016", "TDR017"] },
-  rompad: { name: "Rompad Stores", sheet: "Rompad Rockbreakers", sub: "Rockbreakers (TKRH) · Rompad Stores", machines: ["TKRH011", "TKRH012", "TKRH015", "TKRH016", "TKRH017", "TKRH019", "TKRH020", "TKRH021"] } };
+const STORES = { drill: { name: "Drill Stores", sheet: "TDR Drill Rigs", sub: "Drill rigs (TDR)", machines: ["TDR013", "TDR014", "TDR015", "TDR016", "TDR017"] },
+  rompad: { name: "Rompad Stores", sheet: "Rompad Rockbreakers", sub: "Rockbreakers (TKRH) – Rompad", machines: ["TKRH011", "TKRH012", "TKRH015", "TKRH016", "TKRH017", "TKRH019", "TKRH020", "TKRH021"] } };
 const OILS = ["Hydraulic oil", "Engine oil", "Grease", "Rockdrill / compressor oil"];
 const CATS = { drill: ["GET", ...OILS, "Spares", "PPE"], rompad: [...OILS, "Moil locks", "Spares", "PPE"] };
 const GET_KEYS = [["BIT", "Bits"], ["ROD", "Rods"], ["SHANK", "Shanks"], ["HAMMER", "Hammers"]];
@@ -365,7 +365,6 @@ function render() {
   if (!tabs.some(([k]) => k === tab)) tab = tabs[0][0];
   const keep = {}; app.querySelectorAll("form [id]").forEach(el => { if ("value" in el && el.type !== "submit") keep[el.id] = el.value; });
   let h = `<div class="storesw" role="group" aria-label="Store">${Object.entries(STORES).map(([k, s]) => `<button data-store="${k}" aria-pressed="${store === k}">${s.name}</button>`).join("")}</div>
-  <p class="muted" style="margin:-6px 0 12px;font-size:13.5px">Drill Stores is now at the Rompad, but it stays a separate store. Log drill GET and spares under Drill Stores, Rompad items under Rompad Stores.</p>
     <div class="tabs" role="tablist">${tabs.map(([k, t]) => `<button role="tab" aria-selected="${tab === k}" data-tab="${k}">${t}</button>`).join("")}</div>`;
   h += ({ log: logView, dash: dashView, ppe: ppeView, stock: stockView, report: reportView, items: itemsView, users: usersView }[tab])();
   app.innerHTML = h;
