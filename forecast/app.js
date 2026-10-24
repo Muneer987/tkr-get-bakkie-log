@@ -2,7 +2,7 @@
    Works like the Daily GET Consumption Tracker: same prices, target lives and forecast method.
    Data is shared online in Firebase (admins write, managers read). */
 import {
-  initializeApp, getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
+  initializeApp, getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail,
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, addDoc, setDoc, deleteDoc, onSnapshot, query, where,
 } from "../lib/firebase.js";
 
@@ -49,7 +49,7 @@ const fromStores = () => stMoves.filter(x => x.getKey && x.kind === "issue").map
 const allIssues = () => issues.concat(fromStores());
 const allCounts = () => counts.concat(stCounts.filter(x => x.getKey).map(x => ({ id: x.id, date: x.date, item: x.getKey, count: num(x.count), received: 0, by: x.byName || "", src: "stores" })),
   stMoves.filter(x => x.getKey && x.kind === "receive").map(x => ({ id: x.id, date: x.date, item: x.getKey, count: "", received: num(x.qty), by: (x.from ? x.from + " · " : "") + (x.byName || ""), src: "stores" })));
-let reportDate = ymd(new Date()), tab = "dash", subs = [], impStatus = "";
+let reportDate = ymd(new Date()), tab = "dash", subs = [], impStatus = "", metStatus = "";
 const isAdmin = () => ADMINS.includes(email);
 const isManager = () => isAdmin() || (email && managers.includes(email));
 const app = $("app");
@@ -83,6 +83,11 @@ $("signForm").onsubmit = async e => {
   catch (err) { $("sErr").textContent = String(err?.code || "").includes("network") ? "No signal. Signing in needs signal." : "Email or password is wrong."; }
 };
 $("signBtn").onclick = () => signOut(auth);
+$("forgotBtn").onclick = async () => {
+  const em = $("sEmail").value.trim(); if (!em) { $("sErr").textContent = "Type your email first, then tap Forgot your password."; return; }
+  try { await sendPasswordResetEmail(auth, em); $("sErr").textContent = `A link to set a new password was sent to ${em}. Check the inbox and spam folder.`; }
+  catch (x) { $("sErr").textContent = String(x?.code || "").includes("network") ? "No signal. Try again with signal." : "That email is not set up in the app. Ask admin."; }
+};
 function netNote(m) { $("net").textContent = m; $("net").hidden = !m; }
 addEventListener("offline", () => netNote("No signal. You see the last saved figures; changes send when the signal is back."));
 addEventListener("online", () => netNote(""));
@@ -303,7 +308,12 @@ function importView() {
     <p style="margin-top:0">Choose your Daily GET Consumption Tracker file (.xlsb or .xlsx). The app reads the Production, Consumption and Stock tabs and brings in every line. Importing again replaces the earlier import, so you can import the newest file any time.</p>
     <p class="muted">Lines you typed in this app are kept. Don't type a day here that is also in the file, or it counts twice.</p>
     <input type="file" id="impFile" accept=".xlsb,.xlsx,.xls">
-    <p id="impMsg" class="muted">${esc(impStatus)}</p></section>`;
+    <p id="impMsg" class="muted">${esc(impStatus)}</p></section>
+    <section class="card"><h2>Import a metres summary</h2>
+    <p style="margin-top:0">Choose an Excel with one row per date: <b>Date</b>, <b>TDR 013</b>, <b>TDR 015</b>, <b>TDR 014</b>, and if you have it <b>Month to date</b>. The metres for those dates replace whatever the app had for them, so nothing counts twice.</p>
+    <p class="muted">With a Month to date column, any site metres not split by rig are added per day as "Not allocated", so the month to date matches the site total. They count in month to date and cost per metre, not in a rig's average.</p>
+    <input type="file" id="metFile" accept=".xlsx,.xls,.xlsb,.csv">
+    <p id="metMsg" class="muted">${esc(metStatus)}</p></section>`;
 }
 
 /* ---------- events ---------- */
@@ -317,6 +327,7 @@ app.addEventListener("click", async e => {
 app.addEventListener("change", async e => {
   if (e.target.id === "rd") { reportDate = e.target.value || ymd(new Date()); render(); }
   if (e.target.id === "impFile") importFile(e.target.files[0]);
+  if (e.target.id === "metFile") importMetres(e.target.files[0]);
 });
 app.addEventListener("submit", async e => {
   e.preventDefault(); const f = e.target, v = Object.fromEntries(new FormData(f).entries()), now = Date.now();
@@ -348,7 +359,8 @@ async function importFile(file) {
     const dateOf = v => { if (typeof v === "number") { const d = new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 864e5); return d.toISOString().slice(0, 10); } if (v instanceof Date) return ymd(v); return null; };
     const code = s => String(s || "").toUpperCase().split("-")[0];
     if (!wb.Sheets.Production || !wb.Sheets.Consumption || !wb.Sheets.Stock) { msg.textContent = "This file doesn't have the Production, Consumption and Stock tabs."; return; }
-    const P = rows("Production").slice(6).map((r, i) => ({ i: i + 7, date: dateOf(r[0]), shift: r[1], rig: r[2], block: r[3], metres: num(r[4]), supervisor: r[5] })).filter(x => x.date && x.rig);
+    const summaryDays = new Set(metres.filter(x => x.src === "summary").map(x => x.date));   // a metres summary wins over the tracker for its dates
+    const P = rows("Production").slice(6).map((r, i) => ({ i: i + 7, date: dateOf(r[0]), shift: r[1], rig: r[2], block: r[3], metres: num(r[4]), supervisor: r[5] })).filter(x => x.date && x.rig && !summaryDays.has(x.date));
     const C = rows("Consumption").slice(6).map((r, i) => ({ i: i + 7, date: dateOf(r[0]), shift: r[1], rig: r[2], item: code(r[4]), qty: num(r[6]), note: r[11] })).filter(x => x.date && ["BIT", "ROD", "SHANK"].includes(x.item) && x.qty);
     const S = rows("Stock").slice(6).map((r, i) => ({ i: i + 7, date: dateOf(r[0]), item: code(r[1]), received: num(r[3]), count: r[8] === null || r[8] === "" ? null : num(r[8]), by: r[11] })).filter(x => x.date && STOCK_ITEMS.some(s => s[0] === x.item));
     msg.textContent = `Found ${P.length} metre lines, ${C.length} GET issues and ${S.length} stock lines. Sending…`;
@@ -360,6 +372,39 @@ async function importFile(file) {
     for (const x of S) { await setDoc(doc(db, "fcCounts", "imp-s" + x.i), { date: x.date, item: x.item, count: x.count, received: x.received, by: x.by || "", imported: true, createdAt: now + x.i }); n++; }
     msg.textContent = `Imported ${n} lines from ${file.name}.`; toast("Import done");
   } catch (x) { console.warn(x); msg.textContent = x?.code === "permission-denied" ? "Only an admin can import." : "The file couldn't be read. Save it again in Excel and try once more."; }
+}
+
+/* ---------- metres summary: Date | TDR 013 | TDR 015 | TDR 014 | (Month to date) ---------- */
+async function importMetres(file) {
+  if (!file) return; const say = t => { metStatus = t; const el = $("metMsg"); if (el) el.textContent = t; }; say("Reading the file…");
+  try {
+    await loadLib("../lib/xlsx.full.min.js");
+    const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: null });
+    const norm = v => String(v ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const hi = rows.findIndex(r => r.some(v => norm(v) === "DATE") && r.some(v => norm(v).startsWith("TDR")));
+    if (hi < 0) { say("No header row with Date and TDR columns was found."); return; }
+    const H = rows[hi].map(norm), cDate = H.indexOf("DATE"), cMtd = H.findIndex(h => h.startsWith("MONTHTODATE"));
+    const rigCols = RIGS.map(r => [r, H.findIndex(h => h.startsWith(norm(r)))]).filter(([, i]) => i >= 0);
+    const dateOf = v => { if (typeof v === "number") return new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 864e5).toISOString().slice(0, 10);
+      if (v instanceof Date) return ymd(v); const m = String(v || "").match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/); return m ? `${m[3]}-${pad(+m[2])}-${pad(+m[1])}` : null; };
+    const data = rows.slice(hi + 1).map(r => ({ date: dateOf(r[cDate]), rigs: Object.fromEntries(rigCols.map(([rig, i]) => [rig, num(r[i])])), mtd: cMtd >= 0 && r[cMtd] !== null && r[cMtd] !== "" ? num(r[cMtd]) : null })).filter(x => x.date).sort((a, b) => a.date.localeCompare(b.date));
+    if (!data.length) { say("No dated rows were found under the header."); return; }
+    const lines = []; let prevMtd = null, prevMonth = "";
+    for (const d of data) {
+      const rigSum = Object.values(d.rigs).reduce((a, b) => a + b, 0);
+      Object.entries(d.rigs).forEach(([rig, m]) => { if (m) lines.push({ date: d.date, rig, metres: r1(m) }); });
+      if (d.mtd !== null) { const mo = d.date.slice(0, 7); const site = mo !== prevMonth || prevMtd === null ? d.mtd : d.mtd - prevMtd; const diff = r1(site - rigSum);
+        if (Math.abs(diff) >= 0.05) lines.push({ date: d.date, rig: "Not allocated", metres: diff }); prevMtd = d.mtd; prevMonth = mo; }
+    }
+    const days = new Set(data.map(d => d.date)), total = r1(lines.reduce((a, x) => a + x.metres, 0));
+    if (!confirm(`Import ${data.length} days (${fmt(data[0].date)} to ${fmt(data.at(-1).date)}), ${M1(total)} m in total?\nThe app's metres for these days are replaced.`)) { say("Nothing changed."); return; }
+    say("Sending…");
+    for (const x of metres.filter(x => days.has(x.date))) await deleteDoc(doc(db, "fcMetres", x.id));
+    const now = Date.now(); let n = 0;
+    for (const x of lines) { await setDoc(doc(db, "fcMetres", `sum-${x.date}-${norm(x.rig)}`), { date: x.date, shift: "", rig: x.rig, block: "", metres: x.metres, supervisor: "", src: "summary", note: x.rig === "Not allocated" ? "Site total not split by rig" : "", createdAt: now + n }); n++; }
+    say(`Imported ${n} metre lines for ${data.length} days from ${file.name}. Month to date in the file: ${data.at(-1).mtd !== null ? M1(data.at(-1).mtd) + " m" : "not given"}.`); toast("Metres imported");
+  } catch (x) { console.warn(x); say(x?.code === "permission-denied" ? "Only an admin can import." : "The file couldn't be read. Save it again in Excel and try once more."); }
 }
 
 /* ---------- WhatsApp message ---------- */

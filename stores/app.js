@@ -2,7 +2,7 @@
    and the branded consumption report. Store controllers sign in with their name and PIN; admins approve them.
    GET issued and received at the Drill Stores feeds the GET Forecast (stock and cost) automatically. */
 import {
-  initializeApp, getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged,
+  initializeApp, getAuth, signInAnonymously, sendPasswordResetEmail, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged,
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, addDoc, setDoc, deleteDoc, getDoc, getDocs, onSnapshot,
 } from "../lib/firebase.js";
 
@@ -119,7 +119,7 @@ function showGate(mode, msg = "") {
   } else if (mode === "admin") {
     h = `<form id="gForm" style="display:flex;flex-direction:column;gap:12px" autocomplete="on"><h2>Admin or manager sign in</h2>
       <label>Email <input id="gEmail" type="email" autocomplete="username" required></label><label>Password <input id="gPass" type="password" autocomplete="current-password" required></label>${err}
-      <button class="primary">Sign in</button><button type="button" class="ghost" id="gBack">Back</button></form>`;
+      <button class="primary">Sign in</button><button type="button" class="ghost" id="gForgot">Forgot your password?</button><button type="button" class="ghost" id="gBack">Back</button></form>`;
   }
   gate.innerHTML = h; setTimeout(() => gate.querySelector("input")?.focus(), 50);
 }
@@ -128,6 +128,8 @@ gate.addEventListener("click", async e => {
   if (b.dataset.st) { picked = staff.find(s => s.id === b.dataset.st); showGate(picked.approved ? "pin" : "wait"); }
   if (b.id === "gNew") showGate("register");
   if (b.id === "gAdmin") showGate("admin");
+  if (b.id === "gForgot") { const em = $("gEmail").value.trim(), er = $("gErr"); if (!em) { er.textContent = "Type your email first."; return; }
+    try { await sendPasswordResetEmail(auth, em); er.textContent = `A link to set a new password was sent to ${em}. Check the inbox and spam folder.`; } catch (x) { er.textContent = String(x?.code || "").includes("network") ? "No signal." : "That email is not set up in the app."; } }
   if (b.id === "gBack") { if (user && !user.isAnonymous) { await signOut(auth); } await loadStaff(); showGate("pick"); }
   if (b.id === "gCheck") { await loadStaff(); const s = staff.find(x => x.id === picked?.id); if (s?.approved && user && user.uid === s.id) { me = s; startApp(); } else if (s?.approved) { picked = s; showGate("pin", "You are approved. Type your PIN."); } else $("gErr").textContent = "Not approved yet."; }
 });
