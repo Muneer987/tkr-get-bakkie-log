@@ -121,7 +121,7 @@ service cloud.firestore {
     function attRoles() { return get(/databases/$(database)/documents/config/attendance).data; }
     function attHasRoles() { return exists(/databases/$(database)/documents/config/attendance); }
     function attCapturer() { return attAdmin() || (attHasRoles() && myEmail() in attRoles().get('capturers', [])); }
-    function attViewer() { return attCapturer() || (attHasRoles() && myEmail() in attRoles().get('viewers', [])); }
+    function attViewer() { return attCapturer() || isManager() || (attHasRoles() && myEmail() in attRoles().get('viewers', [])); }
 
     match /config/attendance {
       allow read: if myEmail() != '';

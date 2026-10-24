@@ -11,7 +11,8 @@ let fs;try{fs=initializeFirestore(fbApp,{localCache:persistentLocalCache({tabMan
 let email="",roles={capturers:[],viewers:[]};
 const isAdmin=()=>ADMINS.includes(email);
 const canWrite=()=>isAdmin()||roles.capturers.includes(email);
-const canView=()=>canWrite()||roles.viewers.includes(email);
+let mgrs=[];
+const canView=()=>canWrite()||roles.viewers.includes(email)||mgrs.includes(email);
 // Store paths used by the register, kept apart from the other TKR apps in the same Firebase project.
 const PATHS=[["config/employees","config/attEmployees"],["config/settings","config/attSettings"],["cycles","attRota"],["months","attMonths"]];
 const P=path=>{for(const [a,b] of PATHS)if(path===a||path.startsWith(a+"/"))return b+path.slice(a.length);return path};
@@ -676,13 +677,15 @@ const q=id=>document.getElementById(id);
 function showSignin(on){q("signin").hidden=!on;q("main").hidden=on;q("appBar").hidden=on;q("tabs").hidden=on;q("outBtn").hidden=on}
 let rolesUnsub=null;
 onAuthStateChanged(auth,u=>{if(rolesUnsub){rolesUnsub();rolesUnsub=null}
-  if(!u){email="";showSignin(true);return}
+  if(!u||u.isAnonymous||!u.email||u.email.endsWith("@staff.tkroperations.app")){email="";showSignin(true);return}
   email=(u.email||"").toLowerCase();showSignin(false);q("usersTab").hidden=!isAdmin();
   q("main").innerHTML='<div class="empty"><b>Opening the register</b>Checking your access.</div>';
+  getDoc(doc(fs,"config","roles")).catch(()=>null).then(r=>{mgrs=r&&r.exists()?(r.data().managers||[]).map(x=>String(x).toLowerCase()):[];
+  if(email!==(u.email||"").toLowerCase())return;
   rolesUnsub=onSnapshot(doc(fs,"config","attendance"),d=>{const v=d.exists()?d.data():{};roles={capturers:(v.capturers||[]).map(x=>x.toLowerCase()),viewers:(v.viewers||[]).map(x=>x.toLowerCase())};
     if(!canView()){q("appBar").hidden=true;q("tabs").hidden=true;q("main").innerHTML='<div class="empty"><b>No access yet</b>'+email.replace(/[<>&]/g,"")+' is signed in but does not have access to TKR Attendance. Ask admin.</div>';return}
     q("appBar").hidden=false;q("tabs").hidden=false;startApp(fdb);rerender()},
-    e=>{q("main").innerHTML='<div class="empty"><b>The register could not load</b>'+String(e&&e.message||"Check your signal and open the app again.").replace(/[<>&]/g,"")+'</div>'})});
+    e=>{q("main").innerHTML='<div class="empty"><b>The register could not load</b>'+String(e&&e.message||"Check your signal and open the app again.").replace(/[<>&]/g,"")+'</div>'})})});
 q("signForm").onsubmit=async e=>{e.preventDefault();const m=q("sMsg");m.textContent="Signing in…";q("sBtn").disabled=true;
   try{await signInWithEmailAndPassword(auth,q("sEmail").value.trim(),q("sPass").value);q("sPass").value="";m.textContent=""}
   catch(err){m.textContent=err&&err.code==="auth/network-request-failed"?"No signal. Sign in once with signal; after that the app works offline.":"The email or password is wrong."}

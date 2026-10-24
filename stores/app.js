@@ -11,9 +11,13 @@ const firebaseConfig = {
   storageBucket: "tkr-operations-app.firebasestorage.app", messagingSenderId: "158080247079", appId: "1:158080247079:web:7cb7786d2b7f9ee172b502",
 };
 const ADMINS = ["muneer@tkroperations.com", "amogelang@tkroperations.com"];
-const fbApp = initializeApp(firebaseConfig, "stores");            // own sign-in, apart from the other sections
-const auth = getAuth(fbApp);
-let db; try { db = initializeFirestore(fbApp, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }); } catch { db = initializeFirestore(fbApp, {}); }
+// Admins and managers use the one TKR sign-in shared by every section (signed in once = signed in everywhere).
+// Store controllers sign in here with name + PIN on a separate sign-in, so a Task Board PIN on the same phone is not touched.
+const mainApp = initializeApp(firebaseConfig), mainAuth = getAuth(mainApp);
+const fbApp = initializeApp(firebaseConfig, "stores"), stAuth = getAuth(fbApp);
+const mkDb = a => { try { return initializeFirestore(a, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }); } catch { return initializeFirestore(a, {}); } };
+const stDb = mkDb(fbApp); let mainDb = null;
+let auth = stAuth, db = stDb, boss = false;
 
 /* ---------- helpers ---------- */
 const $ = id => document.getElementById(id);
@@ -79,7 +83,24 @@ const randKey = () => [...crypto.getRandomValues(new Uint8Array(8))].map(b => b.
 const stEmail = key => `st.${key}@staff.tkroperations.app`;
 const stPass = (pin, key) => `tkr-st-${pin}-${key}`;
 async function loadStaff() { try { const s = await getDocs(collection(db, "stUsers")); staff = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name)); } catch (e) { console.warn(e); } }
-onAuthStateChanged(auth, async u => {
+async function bossCheck(u) {
+  if (!u || u.isAnonymous || !u.email || u.email.endsWith("@staff.tkroperations.app")) return false;
+  const em = u.email.toLowerCase(); if (ADMINS.includes(em)) return true;
+  mainDb = mainDb || mkDb(mainApp);
+  try { const r = await getDoc(doc(mainDb, "config", "roles")); return ((r.exists() && r.data().managers) || []).map(x => String(x).toLowerCase()).includes(em); } catch { return false; }
+}
+async function useBoss(u) {
+  boss = true; auth = mainAuth; db = mainDb = mainDb || mkDb(mainApp); user = u; email = u.email.toLowerCase(); me = null;
+  try { const r = await getDoc(doc(db, "config", "roles")); managers = ((r.exists() && r.data().managers) || []).map(x => String(x).toLowerCase()); } catch {}
+  subs.forEach(f => f()); subs = []; startApp();
+}
+(async () => {
+  try { await mainAuth.authStateReady(); } catch {}
+  const u = mainAuth.currentUser;
+  if (await bossCheck(u)) { await useBoss(u); onAuthStateChanged(mainAuth, x => { if (boss && !x) location.reload(); }); return; }
+  watchStores();
+})();
+function watchStores() { onAuthStateChanged(stAuth, async u => {
   user = u; email = (u?.email || "").toLowerCase(); me = null;
   subs.forEach(f => f()); subs = [];
   if (!u) { try { await signInAnonymously(auth); } catch { showGate("pick", "No signal. Opening Stores the first time needs signal."); } return; }
@@ -95,7 +116,7 @@ onAuthStateChanged(auth, async u => {
     if (!isManager()) { await signOut(auth); showGate("pick", "This email is not an admin or manager. Ask admin."); return; }
   }
   startApp();
-});
+}); }
 function showGate(mode, msg = "") {
   gateMode = mode; gateMsg = msg; app.hidden = true; gate.hidden = false; $("outBtn").hidden = true; $("who").textContent = "";
   const err = `<p class="flag" id="gErr" style="margin:0">${esc(msg)}</p>`;
@@ -129,7 +150,7 @@ gate.addEventListener("click", async e => {
   if (b.id === "gNew") showGate("register");
   if (b.id === "gAdmin") showGate("admin");
   if (b.id === "gForgot") { const em = $("gEmail").value.trim(), er = $("gErr"); if (!em) { er.textContent = "Type your email first."; return; }
-    try { await sendPasswordResetEmail(auth, em); er.textContent = `A link to set a new password was sent to ${em}. Check the inbox and spam folder.`; } catch (x) { er.textContent = String(x?.code || "").includes("network") ? "No signal." : "That email is not set up in the app."; } }
+    try { await sendPasswordResetEmail(mainAuth, em); er.textContent = `A link to set a new password was sent to ${em}. Check the inbox and spam folder.`; } catch (x) { er.textContent = String(x?.code || "").includes("network") ? "No signal." : "That email is not set up in the app."; } }
   if (b.id === "gBack") { if (user && !user.isAnonymous) { await signOut(auth); } await loadStaff(); showGate("pick"); }
   if (b.id === "gCheck") { await loadStaff(); const s = staff.find(x => x.id === picked?.id); if (s?.approved && user && user.uid === s.id) { me = s; startApp(); } else if (s?.approved) { picked = s; showGate("pin", "You are approved. Type your PIN."); } else $("gErr").textContent = "Not approved yet."; }
 });
@@ -137,7 +158,9 @@ gate.addEventListener("submit", async e => {
   e.preventDefault(); const err = t => { const el = $("gErr"); if (el) el.textContent = t; };
   if (gateMode === "admin") {
     err("Signing in…");
-    try { await signInWithEmailAndPassword(auth, $("gEmail").value.trim(), $("gPass").value); }
+    try { const cred = await signInWithEmailAndPassword(mainAuth, $("gEmail").value.trim(), $("gPass").value);
+      if (await bossCheck(cred.user)) { if (!stAuth.currentUser?.isAnonymous && stAuth.currentUser) await signOut(stAuth); await useBoss(cred.user); onAuthStateChanged(mainAuth, x => { if (boss && !x) location.reload(); }); }
+      else { await signOut(mainAuth); err("This email is not an admin or manager. Ask admin."); } }
     catch (x) { err(String(x?.code || "").includes("network") ? "No signal. Signing in needs signal." : "Email or password is wrong."); }
     return;
   }
@@ -162,7 +185,7 @@ gate.addEventListener("submit", async e => {
     catch (x) { const c = String(x?.code || ""); $("gPin").value = ""; err(c.includes("too-many") ? "Too many tries. Wait a few minutes." : c.includes("network") ? "No signal. Try again with signal." : "Wrong PIN."); }
   }
 });
-$("outBtn").onclick = async () => { await signOut(auth); };
+$("outBtn").onclick = async () => { if (boss && !confirm("Sign out of the TKR app? You will be signed out of every section on this phone.")) return; await signOut(auth); if (boss) location.reload(); };
 function netNote(m) { $("net").textContent = m; $("net").hidden = !m; }
 addEventListener("offline", () => netNote("No signal. You can keep logging; it sends when the signal is back."));
 addEventListener("online", () => netNote(""));

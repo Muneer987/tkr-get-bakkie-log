@@ -605,7 +605,7 @@ app.addEventListener("click", async e => {
     current = newShift(); await save("Shift started"); render(); scrollTo(0, 0); return;
   }
   if (t.id === "askExport") { t.disabled = true; await askOrCheckExport(); return; }
-  if (t.id === "adminExport") { showAdminExport = !showAdminExport; exportMsg = ""; render(); return; }
+  if (t.id === "adminExport") { const sa = await sharedAdmin(); if (sa) { exportPass = { by: sa.email, until: Date.now() + 8 * 3600e3, db: sa.db }; exportMsg = ""; render(); return; } showAdminExport = !showAdminExport; exportMsg = ""; render(); return; }
   if (t.id === "xlsx") {
     if (!canExport()) { render(); return; }
     try { await loadLib("../lib/exceljs.min.js"); } catch { alert("The export needs the app to be opened once with signal."); return; }
@@ -828,7 +828,7 @@ async function combinedData(db) {
    After that the tablet keeps a hash of the PIN, so the operator can unlock with no signal. */
 const LOCK_AFTER_MS = 10 * 60 * 1000;
 const FIREBASE_CONFIG = { apiKey: "AIzaSyALzOBLObrONGVD1bS0Tz02aNKhQ40TRoI", authDomain: "tkr-operations-app.firebaseapp.com", projectId: "tkr-operations-app", appId: "1:158080247079:web:7cb7786d2b7f9ee172b502" };
-let fb = null, fbApp = null, fbAuth = null, fbDb = null;
+let fb = null, fbApp = null, fbAuth = null, fbDb = null, adminNow = null;
 let ops = [], localOps = [], opNow = null, picked = null, unlocked = false, lastUse = Date.now(), lockMode = "pick";
 async function firebase() {
   if (fbDb) return true;
@@ -838,6 +838,14 @@ async function firebase() {
     fbAuth = fb.getAuth(fbApp); fbDb = fb.initializeFirestore(fbApp, {});
     return true;
   } catch { return false; }
+}
+// The one TKR admin sign-in shared by every section: an admin signed in elsewhere in the app can export here without typing the password again.
+let mainApp = null;
+async function sharedAdmin() {
+  if (!(await firebase())) return null;
+  try { mainApp = mainApp || fb.initializeApp(FIREBASE_CONFIG); const a = fb.getAuth(mainApp); await a.authStateReady?.();
+    const em = (a.currentUser?.email || "").toLowerCase();
+    return ["muneer@tkroperations.com", "amogelang@tkroperations.com"].includes(em) ? { email: em, db: fb.initializeFirestore(mainApp, {}) } : null; } catch { return null; }
 }
 async function ensureSignedIn() {
   await firebase(); await fbAuth.authStateReady?.();
@@ -887,8 +895,9 @@ function lockView(mode, msg = "") {
     el.innerHTML = `<h2>Waiting for approval</h2><p style="margin:0">${esc(picked?.name || "")}, you are registered. Ask admin to approve you. Then tap Check again.</p>${err}
       <button type="button" class="primary" id="lCheck">Check again</button><button type="button" class="ghost" id="lSwitch">Back</button>`;
   } else if (mode === "admin") {
-    el.innerHTML = `<h2>Combined report</h2><p class="muted" style="margin:0">Admin: sign in, choose the dates and download one Excel report for all GET operators. Needs signal.</p>
-      <label>Admin email <input id="laEmail" type="email" autocomplete="username"></label><label>Password <input id="laPass" type="password" autocomplete="current-password"></label>
+    const sa = adminNow;
+    el.innerHTML = `<h2>Combined report</h2><p class="muted" style="margin:0">${sa ? `Signed in as ${esc(sa.email)}. Choose the dates and download one Excel report for all GET operators.` : "Admin: sign in, choose the dates and download one Excel report for all GET operators. Needs signal."}</p>
+      ${sa ? "" : `<label>Admin email <input id="laEmail" type="email" autocomplete="username"></label><label>Password <input id="laPass" type="password" autocomplete="current-password"></label>`}
       <div class="row"><label style="flex:1">From <input type="date" id="laFrom" value="${range.from}"></label><label style="flex:1">To <input type="date" id="laTo" value="${range.to}"></label></div>
       ${err}<button class="primary" id="laGo">Download combined report</button><button type="button" class="ghost" id="lSwitch">Back</button>`;
   } else if (mode === "forgot") {
@@ -916,7 +925,7 @@ $("#lockForm").addEventListener("click", async e => {
   const t = e.target.closest("button"); if (!t || t.type === "submit") return;
   if (t.dataset.op) { picked = ops.find(o => o.id === t.dataset.op) || (() => { const l = localOps.find(o => o.uid === t.dataset.op); return l && { id: l.uid, name: l.name, authEmail: l.authEmail, key: l.key, approved: l.approved }; })(); lockView("pin"); }
   if (t.id === "lNew") lockView("register");
-  if (t.id === "lAdmin") lockView("admin");
+  if (t.id === "lAdmin") { adminNow = await sharedAdmin(); lockView("admin"); }
   if (t.id === "lSwitch") { await loadOps(); lockView("pick"); }
   if (t.id === "lForgot") lockView("forgot");
   if (t.id === "lCheck") { await loadOps(); const o = ops.find(x => x.id === picked?.id); if (o?.approved) { lockView("pin", "You are approved. Type your PIN."); picked = o; } else $("#lErr").textContent = navigator.onLine ? "Not approved yet." : "No signal."; }
@@ -927,16 +936,20 @@ $("#lockForm").addEventListener("submit", async e => {
     if (!navigator.onLine) { err().textContent = "No signal. The combined report needs signal."; return; }
     range.from = $("#laFrom").value || range.from; range.to = $("#laTo").value || range.to;
     if (range.from > range.to) { err().textContent = "Choose a From date before the To date."; return; }
-    err().textContent = "Signing in…";
+    err().textContent = adminNow ? "Making the combined report…" : "Signing in…";
     let tmp;
     try {
-      await firebase(); tmp = fb.initializeApp(FIREBASE_CONFIG, "get-admin-" + Date.now()); const a = fb.getAuth(tmp);
-      const cred = await fb.signInWithEmailAndPassword(a, $("#laEmail").value.trim(), $("#laPass").value);
-      const em = (cred.user.email || "").toLowerCase();
-      if (!["muneer@tkroperations.com", "amogelang@tkroperations.com"].includes(em)) { err().textContent = "Only an admin can do this."; return; }
+      await firebase(); let em, adb;
+      if (adminNow) { em = adminNow.email; adb = adminNow.db; }
+      else {
+        tmp = fb.initializeApp(FIREBASE_CONFIG, "get-admin-" + Date.now()); const a = fb.getAuth(tmp);
+        const cred = await fb.signInWithEmailAndPassword(a, $("#laEmail").value.trim(), $("#laPass").value);
+        em = (cred.user.email || "").toLowerCase(); adb = fb.initializeFirestore(tmp, {});
+        if (!["muneer@tkroperations.com", "amogelang@tkroperations.com"].includes(em)) { err().textContent = "Only an admin can do this."; return; }
+      }
       err().textContent = "Making the combined report…";
       await loadLib("../lib/exceljs.min.js");
-      const { list, photoBlob } = await combinedData(fb.initializeFirestore(tmp, {}));
+      const { list, photoBlob } = await combinedData(adb);
       if (!list.length) { err().textContent = "There are no GET shifts online for these dates yet."; return; }
       const out = await buildBrandedGET(list, em + " · all GET operators", photoBlob);
       const pk = await packExport(out, list, photoBlob, `TKR_GET_Bakkie_Log_All_Operators_${fmtDate(range.from).replace(/\//g, "-")}_to_${fmtDate(range.to).replace(/\//g, "-")}`);
