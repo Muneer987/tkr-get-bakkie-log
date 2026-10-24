@@ -370,8 +370,11 @@ async function importFile(file) {
     if (!wb.Sheets.Production || !wb.Sheets.Consumption || !wb.Sheets.Stock) { msg.textContent = "This file doesn't have the Production, Consumption and Stock tabs."; return; }
     const summaryDays = new Set(metres.filter(x => x.src === "summary").map(x => x.date));   // a metres summary wins over the tracker for its dates
     const P = rows("Production").slice(6).map((r, i) => ({ i: i + 7, date: dateOf(r[0]), shift: r[1], rig: r[2], block: r[3], metres: num(r[4]), supervisor: r[5] })).filter(x => x.date && x.rig && !summaryDays.has(x.date));
-    const C = rows("Consumption").slice(6).map((r, i) => ({ i: i + 7, date: dateOf(r[0]), shift: r[1], rig: r[2], item: code(r[4]), qty: num(r[6]), note: r[11] })).filter(x => x.date && ["BIT", "ROD", "SHANK"].includes(x.item) && x.qty);
-    const S = rows("Stock").slice(6).map((r, i) => ({ i: i + 7, date: dateOf(r[0]), item: code(r[1]), received: num(r[3]), count: r[8] === null || r[8] === "" ? null : num(r[8]), by: r[11] })).filter(x => x.date && STOCK_ITEMS.some(s => s[0] === x.item));
+    // GET already in the Stores section wins for its dates, so the same issue or count never counts twice
+    const stDays = new Set(stMoves.filter(x => x.getKey).map(x => x.date).concat(stCounts.filter(x => x.getKey).map(x => x.date)));
+    const stFrom = [...stDays].sort()[0] || "9999";
+    const C = rows("Consumption").slice(6).map((r, i) => ({ i: i + 7, date: dateOf(r[0]), shift: r[1], rig: r[2], item: code(r[4]), qty: num(r[6]), note: r[11] })).filter(x => x.date && ["BIT", "ROD", "SHANK"].includes(x.item) && x.qty && x.date < stFrom);
+    const S = rows("Stock").slice(6).map((r, i) => ({ i: i + 7, date: dateOf(r[0]), item: code(r[1]), received: num(r[3]), count: r[8] === null || r[8] === "" ? null : num(r[8]), by: r[11] })).filter(x => x.date && STOCK_ITEMS.some(s => s[0] === x.item) && x.date < stFrom);
     msg.textContent = `Found ${P.length} metre lines, ${C.length} GET issues and ${S.length} stock lines. Sending…`;
     // remove the earlier import, then write the new one
     for (const [col, arr] of [["fcMetres", metres], ["fcIssues", issues], ["fcCounts", counts]]) for (const x of arr) if (x.imported) await deleteDoc(doc(db, col, x.id));
