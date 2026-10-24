@@ -30,3 +30,4 @@ tr.tot td{font-weight:700;border-top:2px solid var(--gold)}
 .list .it button{min-height:34px;padding:4px 10px;font-size:13px}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:8px;font-size:14px;z-index:30;max-width:calc(100% - 32px)}
 textarea.msg{width:100%;min-height:220px;font-family:var(--body);font-size:14px}
+.stlink{display:flex;justify-content:space-between;align-items:center;gap:10px;text-decoration:none;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-left:5px solid var(--gold);border-radius:10px;padding:14px 16px;margin-bottom:14px;font-size:15px}.stlink b{font-family:var(--display);font-size:19px}.stlink span:last-child{font-size:28px;color:var(--gold)}

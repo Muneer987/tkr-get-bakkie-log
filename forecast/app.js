@@ -3,7 +3,7 @@
    Data is shared online in Firebase (admins write, managers read). */
 import {
   initializeApp, getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
-  initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, addDoc, setDoc, deleteDoc, onSnapshot,
+  initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, addDoc, setDoc, deleteDoc, onSnapshot, query, where,
 } from "../lib/firebase.js";
 
 const firebaseConfig = {
@@ -39,10 +39,16 @@ const STOCK_ITEMS = [...ITEMS, ["HAMMER", "Hammers", "Hammers"]];
 const ONE = { BIT: "bit", ROD: "rod", SHANK: "shank", HAMMER: "hammer" };
 const qn = (k, q) => `${q} ${ONE[k]}${q === 1 ? "" : "s"}`;
 const RIGS = ["TDR 013", "TDR 015", "TDR 014"];
-const DEFAULTS = { price: { BIT: 9000, ROD: 8621, SHANK: 6200 }, life: { BIT: 600, ROD: 700, SHANK: 500 }, spare: { BIT: 2, ROD: 2, SHANK: 2 }, nextBits: 5, avgDays: 7 };
+const DEFAULTS = { price: { BIT: 9000, ROD: 8621, SHANK: 6200, HAMMER: 48000 }, life: { BIT: 600, ROD: 700, SHANK: 500 }, spare: { BIT: 2, ROD: 2, SHANK: 2 }, nextBits: 5, avgDays: 7 };
 
 /* ---------- state ---------- */
 let user = null, email = "", managers = [], metres = [], issues = [], counts = [], settings = structuredClone(DEFAULTS);
+// GET issued and received at the Drill Stores (Stores section) come in by themselves, with the prices set there
+let stMoves = [], stCounts = [], stPrice = {};
+const fromStores = () => stMoves.filter(x => x.getKey && x.kind === "issue").map(x => ({ id: x.id, date: x.date, shift: x.shift || "", rig: x.machine || "", item: x.getKey, qty: num(x.qty), to: x.to || "", by: x.byName || "", src: "stores" }));
+const allIssues = () => issues.concat(fromStores());
+const allCounts = () => counts.concat(stCounts.filter(x => x.getKey).map(x => ({ id: x.id, date: x.date, item: x.getKey, count: num(x.count), received: 0, by: x.byName || "", src: "stores" })),
+  stMoves.filter(x => x.getKey && x.kind === "receive").map(x => ({ id: x.id, date: x.date, item: x.getKey, count: "", received: num(x.qty), by: (x.from ? x.from + " · " : "") + (x.byName || ""), src: "stores" })));
 let reportDate = ymd(new Date()), tab = "dash", subs = [], impStatus = "";
 const isAdmin = () => ADMINS.includes(email);
 const isManager = () => isAdmin() || (email && managers.includes(email));
@@ -62,11 +68,15 @@ function gateOrApp() {
   if (subs.length === 1) {
     const live = (name, set) => subs.push(onSnapshot(collection(db, name), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => netNote("Couldn't load. Check the signal.")));
     live("fcMetres", v => metres = v); live("fcIssues", v => issues = v); live("fcCounts", v => counts = v);
-    subs.push(onSnapshot(doc(db, "fcSettings", "main"), s => { settings = mergeSettings(s.exists() ? s.data() : {}); render(); }, () => {}));
+    const liveQ = (name, set) => subs.push(onSnapshot(query(collection(db, name), where("store", "==", "drill")), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => console.warn(e)));
+    liveQ("stMoves", v => stMoves = v); liveQ("stCounts", v => stCounts = v);
+    subs.push(onSnapshot(doc(db, "stConfig", "items"), s => { stPrice = {}; (s.exists() ? s.data().list || [] : []).forEach(i => { if (i.getKey && num(i.price) > 0) stPrice[i.getKey] = num(i.price); }); settings = mergeSettings(rawSettings); render(); }, () => {}));
+    subs.push(onSnapshot(doc(db, "fcSettings", "main"), s => { rawSettings = s.exists() ? s.data() : {}; settings = mergeSettings(rawSettings); render(); }, () => {}));
   }
   render();
 }
-function mergeSettings(x) { const s = structuredClone(DEFAULTS); for (const k of ["price", "life", "spare"]) Object.assign(s[k], x[k] || {}); if (x.nextBits !== undefined) s.nextBits = x.nextBits; return s; }
+let rawSettings = {};
+function mergeSettings(x) { const s = structuredClone(DEFAULTS); for (const k of ["price", "life", "spare"]) Object.assign(s[k], x[k] || {}); Object.assign(s.price, stPrice); if (x.nextBits !== undefined) s.nextBits = x.nextBits; return s; }
 $("signForm").onsubmit = async e => {
   e.preventDefault(); $("sErr").textContent = "Signing in…";
   try { await signInWithEmailAndPassword(auth, $("sEmail").value.trim(), $("sPass").value); $("sPass").value = ""; }
@@ -79,6 +89,7 @@ addEventListener("online", () => netNote(""));
 
 /* ---------- the forecast (same method as the tracker) ---------- */
 function calc(rd) {
+  const issues = allIssues(), counts = allCounts();
   const upToCal = addDays(rd, -1);                                    // actuals up to yesterday
   const lastProd = metres.reduce((m, x) => x.date > m ? x.date : m, "");
   const upTo = lastProd && lastProd < upToCal ? lastProd : upToCal;  // average taken up to the last day captured
@@ -227,7 +238,7 @@ function metresChart(c) {
 }
 function listOf(arr, line) {
   const rows = arr.slice().sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 40);
-  return `<div class="list">${rows.map(x => `<div class="it"><span>${line(x)}</span><button class="danger" data-del="${esc(x._c)}|${esc(x.id)}">Delete</button></div>`).join("") || `<div class="muted">Nothing yet.</div>`}</div>`;
+  return `<div class="list">${rows.map(x => `<div class="it"><span>${line(x)}</span>${x._c ? `<button class="danger" data-del="${esc(x._c)}|${esc(x.id)}">Delete</button>` : '<span class="muted">from Stores</span>'}</div>`).join("") || `<div class="muted">Nothing yet.</div>`}</div>`;
 }
 const today = () => ymd(new Date());
 function metresView() {
@@ -244,7 +255,9 @@ function metresView() {
     <section class="card"><h2>Latest metres</h2>${listOf(metres.map(x => ({ ...x, _c: "fcMetres" })), x => `${fmt(x.date)} ${esc(x.shift)} · <b>${esc(x.rig)}</b> · ${M1(num(x.metres))} m ${x.block ? "· " + esc(x.block) : ""} ${x.supervisor ? "· " + esc(x.supervisor) : ""}`)}</section>`;
 }
 function issuesView() {
-  return `<section class="card"><h2>Add GET issued</h2>
+  const list = allIssues();
+  return `<div class="info">GET issued and received at the Drill Stores (the Stores section) comes in here by itself, with the prices set in Stores. Only add GET here that was not logged in Stores, or it counts twice.</div>
+    <section class="card"><h2>Add GET issued</h2>
     <form id="fIssues" class="grid" autocomplete="off">
       <label>Date <input type="date" name="date" value="${today()}" required></label>
       <label>Shift <select name="shift"><option>Day</option><option>Night</option></select></label>
@@ -255,10 +268,11 @@ function issuesView() {
       <label>Issued by <input name="by"></label>
       <div style="display:flex;align-items:flex-end"><button class="primary" style="width:100%">Add</button></div>
     </form></section>
-    <section class="card"><h2>Latest GET issued</h2>${listOf(issues.map(x => ({ ...x, _c: "fcIssues" })), x => `${fmt(x.date)} ${esc(x.shift || "")} · <b>${esc(x.qty)} × ${esc((ITEMS.find(i => i[0] === x.item) || [])[2] || x.item)}</b> · ${esc(x.rig || "")} ${x.to ? "· to " + esc(x.to) : ""} ${x.by ? "· by " + esc(x.by) : ""}`)}</section>`;
+    <section class="card"><h2>Latest GET issued</h2>${listOf(list.map(x => ({ ...x, _c: x.src === "stores" ? "" : "fcIssues" })), x => `${x.src === "stores" ? '<span class="pill closed">Stores</span> ' : ""}${fmt(x.date)} ${esc(x.shift || "")} · <b>${esc(x.qty)} × ${esc((STOCK_ITEMS.find(i => i[0] === x.item) || [])[2] || x.item)}</b> · ${esc(x.rig || "")} ${x.to ? "· to " + esc(x.to) : ""} ${x.by ? "· by " + esc(x.by) : ""}`)}</section>`;
 }
 function stockView(c) {
   return `<section class="card"><h2>Stock count or GET received</h2>
+    <div class="info">Stock counts and GET received at the Drill Stores (the Stores section) come in here by themselves. You only need this form for GET that was not logged in Stores.</div>
     <p class="muted" style="margin-top:0">Type the count from the closing report. If stock was received from the supplier, add it under Received.</p>
     <form id="fStock" class="grid" autocomplete="off">
       <label>Date <input type="date" name="date" value="${addDays(today(), -1)}" required></label>
@@ -269,7 +283,7 @@ function stockView(c) {
       <div style="display:flex;align-items:flex-end"><button class="primary" style="width:100%">Add</button></div>
     </form>
     <p class="muted">On hand now: ${STOCK_ITEMS.map(([k, n]) => `${n.toLowerCase()} ${c.stock[k] ?? "–"}`).join(" · ")}</p></section>
-    <section class="card"><h2>Latest counts</h2>${listOf(counts.map(x => ({ ...x, _c: "fcCounts" })), x => `${fmt(x.date)} · <b>${esc((STOCK_ITEMS.find(i => i[0] === x.item) || [])[2] || x.item)}</b> ${x.count !== "" && x.count != null ? "· count " + esc(x.count) : ""} ${num(x.received) ? "· received " + esc(x.received) : ""} ${x.by ? "· " + esc(x.by) : ""}`)}</section>`;
+    <section class="card"><h2>Latest counts</h2>${listOf(allCounts().map(x => ({ ...x, _c: x.src === "stores" ? "" : "fcCounts" })), x => `${x.src === "stores" ? '<span class="pill closed">Stores</span> ' : ""}${fmt(x.date)} · <b>${esc((STOCK_ITEMS.find(i => i[0] === x.item) || [])[2] || x.item)}</b> ${x.count !== "" && x.count != null ? "· count " + esc(x.count) : ""} ${num(x.received) ? "· received " + esc(x.received) : ""} ${x.by ? "· " + esc(x.by) : ""}`)}</section>`;
 }
 function settingsView() {
   const f = (k, i) => `<input name="${k}.${i}" inputmode="decimal" value="${esc(settings[k][i])}">`;
@@ -277,9 +291,11 @@ function settingsView() {
     <form id="fSettings" autocomplete="off"><div class="tbl"><table>
       <tr><th>Item</th><th>Unit price (R)</th><th>Target life (m)</th><th>Spare next week</th></tr>
       ${ITEMS.map(([k, n]) => `<tr><td>${n}</td><td>${f("price", k)}</td><td>${f("life", k)}</td><td>${f("spare", k)}</td></tr>`).join("")}
+      <tr><td>Hammers</td><td>${f("price", "HAMMER")}</td><td class="muted">stock only</td><td></td></tr>
     </table></div>
     <div class="grid" style="margin-top:12px"><label>Next week bits (your estimate, empty = from the forecast) <input name="nextBits" inputmode="numeric" value="${esc(settings.nextBits ?? "")}"></label></div>
     <button class="primary" style="margin-top:12px">Save settings</button></form>
+    <p class="muted">When a GET price is set in Stores → Items & prices, that price is used here. Hammers: R48 000 each; hammers count in the stock but not in cost per metre, like the tracker.</p>
     <p class="muted">These start with the values in your GET tracker: bits R9 000 / 600 m, rods R8 621 / 700 m, shanks R6 200 / 500 m, next week bits 5, 2 spare each.</p></section>`;
 }
 function importView() {
@@ -314,6 +330,7 @@ app.addEventListener("submit", async e => {
     if (f.id === "fSettings") {
       const s = { price: {}, life: {}, spare: {} };
       ITEMS.forEach(([k]) => { s.price[k] = num(v["price." + k]); s.life[k] = num(v["life." + k]) || DEFAULTS.life[k]; s.spare[k] = num(v["spare." + k]); });
+      s.price.HAMMER = num(v["price.HAMMER"]) || DEFAULTS.price.HAMMER;
       s.nextBits = v.nextBits === "" ? null : num(v.nextBits);
       await setDoc(doc(db, "fcSettings", "main"), s); toast("Settings saved");
     }

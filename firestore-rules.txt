@@ -83,6 +83,39 @@ service cloud.firestore {
     match /fcCounts/{id}   { allow read: if isManager(); allow write: if isAdmin(); }
     match /fcSettings/{id} { allow read: if isManager(); allow write: if isAdmin(); }
 
+    // ---------- Stores (Drill Stores, Rompad Stores, PPE) ----------
+    function stStaff() {
+      return signedIn() && exists(/databases/$(database)/documents/stUsers/$(request.auth.uid))
+        && get(/databases/$(database)/documents/stUsers/$(request.auth.uid)).data.get('approved', false) == true;
+    }
+    function stReader() { return isManager() || stStaff(); }
+
+    match /stUsers/{uid} {
+      allow read: if signedIn();
+      allow create: if signedIn() && uid == request.auth.uid && request.resource.data.approved == false;
+      allow update, delete: if isAdmin();
+    }
+    match /stMoves/{id} {
+      allow read: if stReader();
+      allow create: if (stStaff() || isAdmin()) && request.resource.data.byUid == request.auth.uid
+        && request.resource.data.kind in ['issue', 'receive'] && request.resource.data.store in ['drill', 'rompad'];
+      allow update: if isAdmin();
+      allow delete: if isAdmin() || (stStaff() && resource.data.byUid == request.auth.uid);
+    }
+    match /stCounts/{id} {
+      allow read: if stReader();
+      allow create: if (stStaff() || isAdmin()) && request.resource.data.byUid == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+    match /stConfig/status {
+      allow read: if stReader();
+      allow write: if stStaff() || isAdmin();
+    }
+    match /stConfig/{docId} {
+      allow read: if stReader();
+      allow write: if isAdmin();
+    }
+
     // ---------- Attendance ----------
     function attAdmin() { return myEmail() in ['muneer@tkroperations.com', 'amogelang@tkroperations.com', 'amogelangmabilu56@gmail.com']; }
     function attRoles() { return get(/databases/$(database)/documents/config/attendance).data; }

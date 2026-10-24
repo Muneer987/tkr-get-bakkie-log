@@ -15,6 +15,8 @@ const TYPES = {
 };
 const PICK = ["received", "fitted", "back", "lost"];          // what the driver chooses from ("returned" stays for older records)
 const GET_ITEMS = ITEMS.filter(i => i !== "Other");          // anything else goes in Extras
+const TYPE_SHORT = { received: "From the store", fitted: "Fitted on a rig", back: "Back to the store", lost: "Lost in the hole" };
+let pick = { type: "received", item: GET_ITEMS[0], rig: RIGS[0] };   // the big buttons on the Add card
 let addMode = "get";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -148,7 +150,7 @@ function clearCard() {
 /* ---------- home ---------- */
 function render() {
   if (current) {
-    const keep = {}; app.querySelectorAll("#moveForm [id]").forEach(el => { if ("value" in el) keep[el.id] = el.value; });
+    const keep = {}; app.querySelectorAll("#moveForm [id]").forEach(el => { if ("value" in el && el.type !== "hidden") keep[el.id] = el.value; });
     renderShift();
     Object.entries(keep).forEach(([id, v]) => { const el = document.getElementById(id); if (el && el.closest("#moveForm") && !el.disabled) el.value = v; });
     toggleRig(); fillThumbs(); return;
@@ -296,21 +298,28 @@ function renderShift() {
           <button type="button" class="${addMode === "extra" ? "primary" : "ghost"}" data-mode="extra" ${off}>Extras</button>
         </div>
         <form id="moveForm" class="grid" autocomplete="off">
-          ${trips.length ? `<label>Trip <select id="mTrip" ${off}>${trips.map((tr, i) => `<option value="${esc(tr.id)}" ${i === trips.length - 1 ? "selected" : ""}>Trip ${i + 1}</option>`).join("")}</select></label>` : ""}
+          ${trips.length === 1 ? `<input type="hidden" id="mTrip" value="${esc(trips[0].id)}">` : ""}${trips.length > 1 ? `<label>Trip <select id="mTrip" ${off}>${trips.map((tr, i) => `<option value="${esc(tr.id)}" ${i === trips.length - 1 ? "selected" : ""}>Trip ${i + 1}</option>`).join("")}</select></label>` : ""}
           ${addMode === "get" ? `
-          <label>What happened <select id="mType" ${off}>${PICK.map(k => `<option value="${k}">${TYPES[k].label}</option>`).join("")}</select></label>
-          <label id="rigWrap">Rig <select id="mRig" ${off}>${RIGS.map(r => `<option>${r}</option>`).join("")}</select></label>
-          <label>Item <select id="mItem" ${off}>${GET_ITEMS.map(i => `<option>${i}</option>`).join("")}</select></label>
-          <label>Qty <input id="mQty" inputmode="numeric" value="1" ${off}></label>` : `
+          <input type="hidden" id="mType" value="${esc(pick.type)}"><input type="hidden" id="mItem" value="${esc(pick.item)}"><input type="hidden" id="mRig" value="${esc(pick.rig)}">
+          <div class="step" style="grid-column:1/-1"><span class="stepn">1</span> What happened?</div>
+          <div class="tiles4" style="grid-column:1/-1">${PICK.map(k => `<button type="button" class="tile4 ${TYPES[k].cls}" data-pk="type:${k}" aria-pressed="${pick.type === k}" ${off}>${TYPE_SHORT[k]}</button>`).join("")}</div>
+          ${TYPES[pick.type].rig ? `<div class="step" style="grid-column:1/-1"><span class="stepn">2</span> Which rig?</div>
+          <div class="tiles4" style="grid-column:1/-1">${RIGS.map(r => `<button type="button" class="tile4" data-pk="rig:${esc(r)}" aria-pressed="${pick.rig === r}" ${off}>${esc(r)}</button>`).join("")}</div>` : ""}
+          <div class="step" style="grid-column:1/-1"><span class="stepn">${TYPES[pick.type].rig ? 3 : 2}</span> Which item?</div>
+          <div class="tiles4" style="grid-column:1/-1">${GET_ITEMS.map(i => `<button type="button" class="tile4" data-pk="item:${esc(i)}" aria-pressed="${pick.item === i}" ${off}>${esc(i)}</button>`).join("")}</div>
+          <div class="step" style="grid-column:1/-1"><span class="stepn">${TYPES[pick.type].rig ? 4 : 3}</span> How many?</div>
+          <div class="qtyrow" style="grid-column:1/-1"><button type="button" data-qty="-1" aria-label="One less" ${off}>−</button><input id="mQty" inputmode="numeric" value="1" aria-label="Quantity" ${off}><button type="button" data-qty="1" aria-label="One more" ${off}>+</button></div>` : `
           <label style="grid-column:1/-1">What is it <input id="mWhat" placeholder="For example 20 L hydraulic oil, hose, grease" ${off}></label>
           <label>Qty (optional) <input id="mQty" inputmode="numeric" ${off}></label>`}
+          <details class="more" style="grid-column:1/-1" ${addMode === "extra" ? "open" : ""}><summary>Time, comment or photo (optional)</summary>
+          <div class="grid" style="margin-top:10px">
           <label>Time <input id="mTime" type="time" value="${nowHM()}" ${off}></label>
-          <label style="grid-column:1/-1">Comment (optional) <textarea id="mNote" rows="2" placeholder="Type anything" ${off}></textarea></label>
+          <label style="grid-column:1/-1">Comment <textarea id="mNote" rows="2" placeholder="Type anything" ${off}></textarea></label>
           <div style="grid-column:1/-1">
-            <span class="muted">Photo (optional)</span>
+            <span class="muted">Photo</span>
             <div class="thumbs" style="margin-top:6px">${draftPhotos.map((p, i) => `<img class="thumb" data-draft="${i}" alt="New photo">`).join("")}
               <button type="button" class="ghost addph" id="takePhoto" ${off}>Take photo</button></div>
-          </div>
+          </div></div></details>
           <div style="grid-column:1/-1"><button class="primary" type="submit" style="width:100%" ${off}>${addMode === "get" ? "Add GET" : "Add extra"}${draftPhotos.length ? ` with ${draftPhotos.length} photo${draftPhotos.length === 1 ? "" : "s"}` : ""}</button></div>
         </form>
         <div id="moveErr" class="flag" style="margin-top:8px"></div>
@@ -323,10 +332,10 @@ function renderShift() {
     </div>
 
     <section class="card">
-      <h2>On each rig at end of shift</h2>
-      <div class="tbl"><table>
+      <details class="more" ${RIGS.some(r => Object.values(s.rigs?.[r] || {}).some(v => v !== "" && v != null)) ? "open" : ""}><summary><b>End of shift:</b> what is on each rig (tap to fill in)</summary>
+      <div class="tbl" style="margin-top:10px"><table>
         <thead><tr><th>Rig</th><th>Bits</th><th>Rods</th><th>Shanks</th></tr></thead>
-        <tbody>${rigRows}</tbody></table></div>
+        <tbody>${rigRows}</tbody></table></div></details>
     </section>
 
     <section class="card">
@@ -585,6 +594,8 @@ app.addEventListener("click", async e => {
   }
   const t = e.target.closest("button"); if (!t) return;
   if (t.dataset.view) { view = t.dataset.view; render(); return; }
+  if (t.dataset.pk && current) { const [k, v] = t.dataset.pk.split(/:(.*)/s); pick[k] = v; render(); return; }
+  if (t.dataset.qty && current) { const q = $("#mQty"); q.value = Math.max(1, (parseInt(q.value, 10) || 0) + Number(t.dataset.qty)); return; }
   if (t.dataset.mode && current) { addMode = t.dataset.mode; renderShift(); fillThumbs(); return; }
   if (t.dataset.open) { clearDrafts(); current = structuredClone(shifts.find(x => x.id === t.dataset.open)); statusMsg = ""; render(); scrollTo(0, 0); return; }
   if (t.id === "back") { if (saveTimer) await save(); clearDrafts(); current = null; render(); return; }
