@@ -541,8 +541,8 @@ async function exportReport(m, ctl, sup) {
   const buf = await X.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   const name = `TKR_Stores_Consumption_${MONTHS[+m.slice(5, 7) - 1]}_${m.slice(0, 4)}.xlsx`;
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
-  toast("Consumption report downloaded");
+  const { deliver } = await import("../lib/deliver.js");
+  deliver(blob, name, { doneLabel: "Done – clear this phone's copy", onDone: async () => { const fb = await import("../lib/firebase.js"); const { clearPhoneCopy } = await import("../lib/deliver.js"); await clearPhoneCopy(fb, [db], toast); } });
 }
 
 if ("serviceWorker" in navigator && navigator.serviceWorker.controller) { let r = false; navigator.serviceWorker.addEventListener("controllerchange", () => { if (r) return; r = true; location.reload(); }); }

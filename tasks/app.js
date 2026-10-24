@@ -386,10 +386,8 @@ $("exGo").onclick = async () => {
     const out = await brandedWorkbook(list, from, to, names);
     const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     const name = `TKR_Daily_Tasks_${fmt(from).replace(/\//g, "-")}_to_${fmt(to).replace(/\//g, "-")}.xlsx`;
-    const file = new File([blob], name, { type: blob.type });
-    if (navigator.canShare && navigator.canShare({ files: [file] }) && matchMedia("(pointer:coarse)").matches) {
-      try { await navigator.share({ files: [file], title: name }); } catch {}
-    } else { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }
+    const { deliver } = await import("../lib/deliver.js");
+    deliver(blob, name, { doneLabel: "Done – clear this phone's copy", onDone: async () => { const fb = await import("../lib/firebase.js"); const { clearPhoneCopy } = await import("../lib/deliver.js"); await clearPhoneCopy(fb, [db], toast); } });
     $("exMsg").textContent = `${list.length} task${list.length === 1 ? "" : "s"} exported.`;
   } catch (err) { console.warn(err); $("exMsg").textContent = err?.code === "permission-denied" ? "Only managers can export." : "The export needs signal. Try again with signal."; }
 };

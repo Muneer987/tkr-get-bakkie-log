@@ -1,10 +1,10 @@
 // Opens the app straight from the phone (fast, works with no signal) and fetches any update in the
 // background; the update shows the next time the app is opened. Bump VERSION when the app files change.
 // Firebase traffic (other websites) is never touched here; Firebase keeps its own offline copy.
-const VERSION = "v35";
+const VERSION = "v36";
 const FILES = ["./", "index.html", "style.css", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-192.png", "icons/maskable-512.png", "icons/logo-96.png",
-  "lib/xlsx.full.min.js", "lib/jszip.min.js", "lib/firebase.js", "lib/exceljs.min.js",
+  "lib/xlsx.full.min.js", "lib/jszip.min.js", "lib/firebase.js", "lib/exceljs.min.js", "lib/deliver.js",
   "get/", "get/index.html", "get/style.css", "get/app.js",
   "tasks/", "tasks/index.html", "tasks/tasks.css", "tasks/app.js",
   "forecast/", "forecast/index.html", "forecast/fc.css", "forecast/app.js",

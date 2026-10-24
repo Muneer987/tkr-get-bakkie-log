@@ -522,7 +522,8 @@ async function brandedSave(name,wbIn){toast("Preparing the Excel…");await load
       if(!isGroup&&!isTot)k++;out++}
     freezeAt(ws,headRowNo)}
   const buf=await X.xlsx.writeBuffer();const blob=new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
-  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1500);toast("Excel downloaded")}
+  const {deliver}=await import("../lib/deliver.js");
+  deliver(blob,name,{doneLabel:"Done – clear this phone's copy",onDone:async()=>{const fb=await import("../lib/firebase.js");const {clearPhoneCopy}=await import("../lib/deliver.js");await clearPhoneCopy(fb,[fs],toast)}})}
 function freezeAt(ws,row){ws.views=[{state:"frozen",ySplit:row,xSplit:row>5?1:0,showGridLines:false}]}
 const yr=d=>parse(d).getFullYear();
 function rangeDates(from,to){const out=[];for(let x=from;x<=to&&out.length<400;x=addDays(x,1))out.push(x);return out}

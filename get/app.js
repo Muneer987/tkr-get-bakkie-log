@@ -572,6 +572,18 @@ async function askOrCheckExport() {
 
 function num(v) { return v === "" || v == null ? "" : (isNaN(Number(v)) ? v : Number(v)); }
 
+/* After an export: the closed shifts in the file are taken off this tablet once everything is sent to Firebase.
+   The latest shift and open shifts stay, so the next shift still starts from the last counts. */
+async function clearTabletCopy(ask) {
+  if (waiting()) { await syncNow?.(); }
+  if (waiting()) { alert("Some shifts are still sending, so they stay on this tablet. They clear after the next export with signal."); return; }
+  const list = clearable(); if (!list.length) { lastExport = null; render(); return; }
+  const nPh = list.reduce((n, s) => n + allPhotos(s).length, 0);
+  if (ask && !confirm(`Clear ${list.length} shift${list.length === 1 ? "" : "s"}${nPh ? ` and ${nPh} photo${nPh === 1 ? "" : "s"}` : ""} from this tablet? They stay in Firebase and in the export.`)) return;
+  for (const s of list) { await store.del(s.id); await deletePhotos(allPhotos(s)); }
+  const gone = new Set(list.map(s => s.id)); shifts = shifts.filter(s => !gone.has(s.id));
+  lastExport = null; render(); setStatus?.(`${list.length} exported shift${list.length === 1 ? "" : "s"} cleared from this tablet`);
+}
 async function shareOrDownload(blob, filename) {
   const file = new File([blob], filename, { type: blob.type });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -619,8 +631,9 @@ app.addEventListener("click", async e => {
       if (!all.length) { alert("There are no GET shifts online for these dates yet."); render(); return; }
       const out = await buildBrandedGET(all, exportPass.by + " · all GET operators", photoBlob);
       const pk = await packExport(out, all, photoBlob, `TKR_GET_Bakkie_Log_All_Operators_${fmtDate(range.from).replace(/\//g, "-")}_to_${fmtDate(range.to).replace(/\//g, "-")}`);
-      const r = await shareOrDownload(pk.blob, pk.name);
-      if (r !== "cancelled") lastExport = { ids: all.map(s => s.id), from: range.from, to: range.to, photos: true };
+      lastExport = { ids: all.map(s => s.id), from: range.from, to: range.to, photos: true };
+      const { deliver } = await import("../lib/deliver.js");
+      deliver(pk.blob, pk.name, { doneLabel: "Done – clear this tablet's copy", onDone: clearTabletCopy });
     } catch (x) { console.warn(x); alert("The Excel file couldn't be made. Try a shorter date range."); }
     render(); return;
   }
@@ -632,14 +645,7 @@ app.addEventListener("click", async e => {
   if (t.dataset.tripback) { tripsOf(current)[+t.dataset.tripback].back = nowHM(); await save("Back at store " + nowHM()); render(); return; }
   if (t.dataset.tripdel) { tripsOf(current).splice(+t.dataset.tripdel, 1); await save("Trip removed"); render(); return; }
   if (t.id === "keepExported") { lastExport = null; render(); return; }
-  if (t.id === "clearExported") {
-    const list = clearable();
-    const nPh = list.reduce((n, s) => n + allPhotos(s).length, 0);
-    if (!confirm(`Clear ${list.length} shift${list.length === 1 ? "" : "s"}${nPh ? ` and ${nPh} photo${nPh === 1 ? "" : "s"}` : ""} from this tablet? This cannot be undone. Only do this if the exported file arrived.`)) return;
-    for (const s of list) { await store.del(s.id); await deletePhotos(allPhotos(s)); }
-    const gone = new Set(list.map(s => s.id)); shifts = shifts.filter(s => !gone.has(s.id));
-    lastExport = null; render(); alert(`${list.length} shift${list.length === 1 ? "" : "s"} cleared.`); return;
-  }
+  if (t.id === "clearExported") { await clearTabletCopy(true); return; }
   if (t.id === "takePhoto") { photoTarget = null; $("#camera").click(); return; }
   if (t.dataset.addphoto) { photoTarget = t.dataset.addphoto; $("#camera").click(); return; }
   if (t.id === "backup") {
@@ -953,7 +959,7 @@ $("#lockForm").addEventListener("submit", async e => {
       if (!list.length) { err().textContent = "There are no GET shifts online for these dates yet."; return; }
       const out = await buildBrandedGET(list, em + " · all GET operators", photoBlob);
       const pk = await packExport(out, list, photoBlob, `TKR_GET_Bakkie_Log_All_Operators_${fmtDate(range.from).replace(/\//g, "-")}_to_${fmtDate(range.to).replace(/\//g, "-")}`);
-      await shareOrDownload(pk.blob, pk.name);
+      const { deliver } = await import("../lib/deliver.js"); deliver(pk.blob, pk.name);
       err().textContent = `Done: ${list.length} shift${list.length === 1 ? "" : "s"} from all GET operators.`;
     } catch (x) { console.warn(x); err().textContent = String(x?.code || "").includes("auth") ? "Email or password is wrong." : "The report couldn't be made. Check the signal and try again."; }
     finally { $("#laPass") && ($("#laPass").value = ""); if (tmp) { fb.getAuth(tmp).signOut?.(); fb.deleteApp(tmp).catch(() => {}); } }

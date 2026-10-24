@@ -506,9 +506,8 @@ async function exportExcel(c) {
   table(ws3, 7, ["Date", "Shift", "Rig", "Item", "Qty", "Cost (R)", "Note"], [...irows.map(x => [fmt(x.date), x.shift || "", x.rig || "", (ITEMS.find(i => i[0] === x.item) || [])[2] || x.item, num(x.qty), num(x.qty) * (settings.price[x.item] || 0), [x.to && "to " + x.to, x.by && "by " + x.by, x.note].filter(Boolean).join(" · ")]), ["Month to date", "", "", "", "", Math.round(c.month.cost), ""]], true);
   const out = await wb.xlsx.writeBuffer();
   const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), name = `TKR_GET_Forecast_${fmt(c.rd).replace(/\//g, "-")}.xlsx`;
-  const file = new File([blob], name, { type: blob.type });
-  if (navigator.canShare && navigator.canShare({ files: [file] }) && matchMedia("(pointer:coarse)").matches) { try { await navigator.share({ files: [file], title: name }); return; } catch {} }
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  const { deliver } = await import("../lib/deliver.js");
+  deliver(blob, name, { doneLabel: "Done – clear this phone's copy", onDone: async () => { const fb = await import("../lib/firebase.js"); const { clearPhoneCopy } = await import("../lib/deliver.js"); await clearPhoneCopy(fb, [db], toast); } });
 }
 
 // A new version of the app was installed: load it straight away instead of on the next open.
