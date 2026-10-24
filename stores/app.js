@@ -582,6 +582,11 @@ async function exportReport(m, ctl, sup) {
   let logo = null; try { logo = X.addImage({ buffer: await (await fetch("../icons/icon-512.png")).arrayBuffer(), extension: "png" }); } catch {}
   const C = { BLACK: "FF111111", HEAD: "FF262626", GOLD: "FFD4A12A", CREAM: "FFFFF8E6", TOT: "FFFFF2CC", WHITE: "FFFFFFFF", GRID: "FFD9D3C5", MUTED: "FF6B6558", OUT: "FFC2410C", IN: "FF2E7D4F" };
   const thin = { style: "thin", color: { argb: C.GRID } }, box = { top: thin, left: thin, bottom: thin, right: thin }, fill = c => ({ type: "pattern", pattern: "solid", fgColor: { argb: c } });
+  // one colour per machine (same colour on every sheet), and a colour of its own for each oil
+  const MC_FILLS = ["FFDCEAF8", "FFDDF0E1", "FFFFEDC7", "FFEADDF5", "FFF9DCDC", "FFD5F0EC", "FFF0E6D2", "FFE3F4D6", "FFFCE2CF", "FFE2E6F0", "FFF7DDEE", "FFD8EEF7", "FFEFF0CF", "FFE8E0D8", "FFDDE3F8", "FFF3E3E3", "FFD9F2E4", "FFF4EBD9", "FFE6DCEF", "FFDFEFEF"];
+  const mcList = [...new Set([...STORES.drill.machines, ...STORES.rompad.machines, ...issuesOf(null, m).map(x => x.machine).filter(Boolean).sort()])];
+  const mcFill = mc => { const i = mcList.indexOf(mc); return i < 0 ? "FFF2F2F2" : MC_FILLS[i % MC_FILLS.length]; };
+  const OIL_C = { "Hydraulic oil": "FF1F5FA8", "Engine oil": "FF8A4B08", "Grease": "FF5B5B5B", "Rockdrill / compressor oil": "FF2E7D4F" };
   const title = `TKR OPERATIONS – STORES CONSUMPTION REPORT, ${monthName(m).toUpperCase()}`;
   const people = `Stores Controller: ${ctl || ""}   |   Supervisor: ${sup || ""}`;
   function sheet(name, sub, widths) {
@@ -598,14 +603,14 @@ async function exportReport(m, ctl, sup) {
     return { ws, n, r: 7 };
   }
   function heading(S, text) { const c = S.ws.getCell(S.r, 1); c.value = text; c.font = { name: "Arial", size: 12, bold: true, color: { argb: C.BLACK } }; S.ws.getRow(S.r).height = 20; S.r++; }
-  function head(S, labels) { const row = S.ws.getRow(S.r); row.height = 30; labels.forEach((l, i) => { const c = row.getCell(i + 1); c.value = l; c.font = { name: "Arial", size: 10, bold: true, color: { argb: C.WHITE } }; c.fill = fill(C.HEAD); c.border = box; c.alignment = { vertical: "middle", horizontal: i ? "center" : "left", wrapText: true }; }); S.r++; }
+  function head(S, labels, fills = {}) { const row = S.ws.getRow(S.r); row.height = labels.some(l => l.length > 22) ? 44 : 30; labels.forEach((l, i) => { const c = row.getCell(i + 1); c.value = l; c.font = { name: "Arial", size: 10, bold: true, color: { argb: C.WHITE } }; c.fill = fill(fills[i] || C.HEAD); c.border = box; c.alignment = { vertical: "middle", horizontal: i ? "center" : "left", wrapText: true }; }); S.r++; }
   function line(S, vals, i, o = {}) {
     const row = S.ws.getRow(S.r); row.height = 18;
-    vals.forEach((v, k) => { const c = row.getCell(k + 1); c.value = v === "" || v == null ? null : v; c.border = box; c.font = { name: "Arial", size: 10, bold: !!o.bold, color: { argb: o.color?.[k] || C.BLACK } };
+    vals.forEach((v, k) => { const c = row.getCell(k + 1); c.value = v === "" || v == null ? null : v; c.border = box; c.font = { name: "Arial", size: 10, bold: !!o.bold || !!o.color?.[k], color: { argb: o.color?.[k] || C.BLACK } };
       c.alignment = { vertical: "middle", horizontal: typeof v === "number" ? "center" : "left", wrapText: true };
       if (o.money?.includes(k) && typeof v === "number") c.numFmt = '"R" #,##0';
       if (o.date?.includes(k) && v instanceof Date) c.numFmt = "dd/mm/yyyy";
-      if (o.tot) { c.fill = fill(C.TOT); c.border = { top: { style: "medium", color: { argb: C.GOLD } }, left: thin, bottom: thin, right: thin }; } else if (i % 2) c.fill = fill(C.CREAM); });
+      if (o.tot) { c.fill = fill(C.TOT); c.border = { top: { style: "medium", color: { argb: C.GOLD } }, left: thin, bottom: thin, right: thin }; } else if (o.mc !== undefined) c.fill = fill(mcFill(o.mc)); });
     S.r++;
   }
   const dt = s => { if (!s) return ""; const [y, mo, d] = s.split("-").map(Number); return new Date(Date.UTC(y, mo - 1, d)); };
@@ -614,22 +619,23 @@ async function exportReport(m, ctl, sup) {
   for (const st of ["drill", "rompad"]) {
     const S = sheet(STORES[st].sheet, STORES[st].sub, [16, 20, 15, 34, 17, 15, 18, 20, 14]);
     heading(S, "Totals per machine");
-    head(S, ["Machine", ...OILS.map(o => o + (o === "Grease" ? "" : " (20 L)")), "Spares items issued", "Value (R)", "Status"]);
+    head(S, ["Machine", ...OILS.map(o => o + (o === "Grease" ? "" : " (20 L)")), "Spares items issued", "Value (R)", "Status"], Object.fromEntries(OILS.map((o, k) => [k + 1, OIL_C[o]])));
     const mt = machineTotals(st, m);
-    mt.forEach((r, i) => line(S, [r.mc, ...OILS.map(o => r.oils[o]), r.spares, r.value, status[r.mc] || ""], i, { money: [6] }));
+    const oilFont = Object.fromEntries(OILS.map((o, k) => [k + 1, OIL_C[o]]));
+    mt.forEach((r, i) => line(S, [r.mc, ...OILS.map(o => r.oils[o]), r.spares, r.value, status[r.mc] || ""], i, { money: [6], mc: r.mc, color: oilFont }));
     line(S, ["Total", ...OILS.map(o => mt.reduce((n, r) => n + r.oils[o], 0)), mt.reduce((n, r) => n + r.spares, 0), mt.reduce((n, r) => n + r.value, 0), ""], 0, { tot: true, bold: true, money: [6] });
     S.r++; heading(S, "Everything issued");
     head(S, ["Machine", "Category", "Date", "Item issued", "Qty", "Unit", "Issued to", "Logged by", "Value (R)"]);
     const l = sortD(issuesOf(st, m));
     if (!l.length) line(S, ["Nothing issued this month.", "", "", "", "", "", "", "", ""], 0);
-    l.forEach((x, i) => line(S, [x.machine || "Store", x.cat, dt(x.date), x.item, num(x.qty), x.unit || "", x.to || "", x.byName || "", x.price ? val(x) : ""], i, { money: [8], date: [2] }));
+    l.forEach((x, i) => line(S, [x.machine || "Store", x.cat, dt(x.date), x.item, num(x.qty), x.unit || "", x.to || "", x.byName || "", x.price ? val(x) : ""], i, { money: [8], date: [2], mc: x.machine || "", bold: false, color: OIL_C[x.cat] ? { 1: OIL_C[x.cat], 3: OIL_C[x.cat] } : undefined }));
     if (l.length) line(S, ["Total", "", "", "", "", "", "", "", l.reduce((n, x) => n + val(x), 0)], 0, { tot: true, bold: true, money: [8] });
   }
   // every issue, both stores
   let S = sheet("All Issues", "All machines and spares issued", [12, 10, 16, 38, 8, 8, 12, 13, 20, 16, 30]);
   head(S, ["Date", "Store", "Machine", "Item issued", "Qty", "Unit", "Price (R)", "Value (R)", "Issued to", "Logged by", "Note"]);
   const all = issuesOf(null, m).sort((a, b) => a.date.localeCompare(b.date) || a.store.localeCompare(b.store) || (a.createdAt || 0) - (b.createdAt || 0));
-  all.forEach((x, i) => line(S, [dt(x.date), x.store === "drill" ? "Drill" : "Rompad", x.machine || "", x.item, num(x.qty), x.unit || "", x.price || "", x.price ? val(x) : "", x.to || "", x.byName || "", x.note || ""], i, { money: [6, 7], date: [0] }));
+  all.forEach((x, i) => line(S, [dt(x.date), x.store === "drill" ? "Drill" : "Rompad", x.machine || "", x.item, num(x.qty), x.unit || "", x.price || "", x.price ? val(x) : "", x.to || "", x.byName || "", x.note || ""], i, { money: [6, 7], date: [0], mc: x.machine || "", color: OIL_C[x.cat] ? { 3: OIL_C[x.cat] } : undefined }));
   if (all.length) line(S, ["Total", "", "", "", "", "", "", all.reduce((n, x) => n + val(x), 0), "", "", ""], 0, { tot: true, bold: true, money: [7] });
   // PPE
   S = sheet("PPE", "Personal protective equipment issued", [26, 10, 22, 26, 8, 8, 13, 18, 24]);
