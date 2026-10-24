@@ -39,8 +39,8 @@ const lsGet = k => { try { return localStorage.getItem(k); } catch { return null
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 
 /* ---------- what the stores hold ---------- */
-const STORES = { drill: { name: "Drill Stores", sheet: "TDR Drill Rigs", sub: "Drill rigs (TDR)", machines: ["TDR013", "TDR014", "TDR015", "TDR016", "TDR017"] },
-  rompad: { name: "Rompad Stores", sheet: "Rompad Rockbreakers", sub: "Rockbreakers (TKRH) – Rompad", machines: ["TKRH011", "TKRH012", "TKRH015", "TKRH016", "TKRH017", "TKRH019", "TKRH020", "TKRH021"] } };
+const STORES = { drill: { name: "Drill Stores", sheet: "TDR Drill Rigs", sub: "Drill rigs (TDR) · now at the Rompad, but its own store", machines: ["TDR013", "TDR014", "TDR015", "TDR016", "TDR017"] },
+  rompad: { name: "Rompad Stores", sheet: "Rompad Rockbreakers", sub: "Rockbreakers (TKRH) · Rompad Stores", machines: ["TKRH011", "TKRH012", "TKRH015", "TKRH016", "TKRH017", "TKRH019", "TKRH020", "TKRH021"] } };
 const OILS = ["Hydraulic oil", "Engine oil", "Grease", "Rockdrill / compressor oil"];
 const CATS = { drill: ["GET", ...OILS, "Spares", "PPE"], rompad: [...OILS, "Moil locks", "Spares", "PPE"] };
 const GET_KEYS = [["BIT", "Bits"], ["ROD", "Rods"], ["SHANK", "Shanks"], ["HAMMER", "Hammers"]];
@@ -323,6 +323,14 @@ function startApp() {
   render();
 }
 
+/* ---------- duplicates: same store, issue/receive, day, item, quantity, machine and person ---------- */
+const dupKey = x => [x.store, x.kind, x.date, (x.itemId || String(x.item || "").trim().toLowerCase()), num(x.qty), String(x.machine || "").toUpperCase(), String(x.kind === "issue" ? x.to || "" : x.from || "").trim().toLowerCase()].join("|");
+function duplicates() {   // later lines that repeat an earlier one; the first line is kept as the real one
+  const seen = new Map(), dups = new Map();
+  moves.slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).forEach(x => { const k = dupKey(x); if (seen.has(k)) dups.set(x.id, seen.get(k)); else seen.set(k, x); });
+  return dups;
+}
+
 /* ---------- numbers ---------- */
 const storeItems = st => items.filter(i => i.store === st || i.store === "both");
 const itemOf = id => items.find(i => i.id === id);
@@ -357,6 +365,7 @@ function render() {
   if (!tabs.some(([k]) => k === tab)) tab = tabs[0][0];
   const keep = {}; app.querySelectorAll("form [id]").forEach(el => { if ("value" in el && el.type !== "submit") keep[el.id] = el.value; });
   let h = `<div class="storesw" role="group" aria-label="Store">${Object.entries(STORES).map(([k, s]) => `<button data-store="${k}" aria-pressed="${store === k}">${s.name}</button>`).join("")}</div>
+  <p class="muted" style="margin:-6px 0 12px;font-size:13.5px">Drill Stores is now at the Rompad, but it stays a separate store. Log drill GET and spares under Drill Stores, Rompad items under Rompad Stores.</p>
     <div class="tabs" role="tablist">${tabs.map(([k, t]) => `<button role="tab" aria-selected="${tab === k}" data-tab="${k}">${t}</button>`).join("")}</div>`;
   h += ({ log: logView, dash: dashView, ppe: ppeView, stock: stockView, report: reportView, items: itemsView, users: usersView }[tab])();
   app.innerHTML = h;
@@ -401,18 +410,22 @@ function syncForms() {
   const dl = document.getElementById("names"); if (!dl) app.insertAdjacentHTML("beforeend", `<datalist id="names">${[...new Set(moves.map(x => x.to).filter(Boolean))].sort().map(n => `<option value="${esc(n)}">`).join("")}</datalist>`);
 }
 const stockText = it => { const s = stockOf(store, it); return s.onHand === null ? "no stock count yet" : `<b class="${s.onHand <= num(it.min) ? "low" : ""}">${nq(s.onHand)}</b> ${esc(it.unit || "")}`; };
-function lineHtml(x, canDel) {
+function lineHtml(x, canDel, dup) {
   const out = x.kind === "issue";
   return `<div class="line"><span class="pill ${out ? "out" : "in"}">${out ? "Issued" : "Received"}</span>
-    <div><b>${esc(nq(x.qty))} ${esc(x.unit || "")} × ${esc(x.item)}</b>${x.price ? ` · ${R(val(x))}` : ""}
+    <div><b>${esc(nq(x.qty))} ${esc(x.unit || "")} × ${esc(x.item)}</b>${x.price ? ` · ${R(val(x))}` : ""}${dup ? ` <span class="pill out" title="Same store, day, item, quantity, machine and person as a line logged earlier">Possible duplicate</span>` : ""}
       <div class="meta">${fmt(x.date)}${x.shift ? " " + esc(x.shift) : ""} · ${esc(x.cat)}${x.machine ? " · " + esc(x.machine) : ""}${x.to ? " · to " + esc(x.to) : ""}${x.from ? " · from " + esc(x.from) : ""}${x.ref ? " · " + esc(x.ref) : ""}${x.note ? " · " + esc(x.note) : ""} · logged by ${esc(x.byName || "")}</div></div>
     ${canDel ? `<button class="ghost" data-del="${esc(x.id)}">Remove</button>` : "<span></span>"}</div>`;
 }
 const mayDel = x => isAdmin() || (me && x.byUid === user?.uid && x.date >= ymd(new Date(Date.now() - 2 * 864e5)));
 function logView() {
   const recent = moves.filter(x => x.store === store).sort((a, b) => (b.date + pad(b.createdAt || 0)).localeCompare(a.date + pad(a.createdAt || 0))).slice(0, 40);
-  return `<div class="pair">${moveForm("out")}${moveForm("in")}</div>
-    <section class="card"><h2>Latest at ${STORES[store].name}</h2>${recent.length ? recent.map(x => lineHtml(x, mayDel(x))).join("") : '<div class="empty"><b>Nothing logged yet</b>Every item issued or received shows here.</div>'}
+  const dups = duplicates(), mine = [...dups.keys()].map(id => moves.find(x => x.id === id)).filter(x => x && x.store === store);
+  const dupCard = mine.length ? `<section class="card" style="border:2px solid var(--bad)"><h2>Possible duplicates (${mine.length})</h2>
+    <p class="muted" style="margin-top:0">These lines repeat a line logged earlier: same day, item, quantity, machine and person. If it is the same issue or delivery logged twice, remove it so stock and cost are not counted twice. If it really happened twice, keep it.</p>
+    ${mine.map(x => { const o = dups.get(x.id); return lineHtml(x, mayDel(x), true) + `<div class="meta" style="margin:-4px 0 8px 0">First logged by ${esc(o.byName || "")}${o.createdAt ? " at " + new Date(o.createdAt).toLocaleString("en-ZA", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : ""}</div>`; }).join("")}</section>` : "";
+  return `${dupCard}<div class="pair">${moveForm("out")}${moveForm("in")}</div>
+    <section class="card"><h2>Latest at ${STORES[store].name}</h2>${recent.length ? recent.map(x => lineHtml(x, mayDel(x), dups.has(x.id))).join("") : '<div class="empty"><b>Nothing logged yet</b>Every item issued or received shows here.</div>'}
     <p class="muted">A line can be removed by the person who logged it for 2 days. After that ask admin.</p></section>`;
 }
 function monthPick(id = "month") { return `<label>Month <input type="month" id="${id}" value="${month}" max="${today().slice(0, 7)}"></label>`; }
@@ -431,7 +444,7 @@ function dashView() {
       const lastM = fcMetres.filter(x => (x.date || "").slice(0, 7) === month).reduce((d, x) => x.date > d ? x.date : d, "");
       const getC = iss.filter(x => ["BIT", "ROD", "SHANK"].includes(x.getKey) && x.date <= lastM).reduce((n, x) => n + val(x), 0);   // same days as the metres
       return `<div class="tiles">${tile("GET cost per metre", mm ? "R" + (getC / mm).toFixed(2) : "–", mm ? `1 to ${fmt(lastM).slice(0, 5)}: ${R(getC)} bits, rods and shanks ÷ ${String(Math.round(mm * 10) / 10).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} m · standard R39.72/m` : "no metres yet", "dark")}${tile("Metres month to date", mm ? (Math.round(mm * 10) / 10).toFixed(1) + " m" : "–", lastM ? "captured up to " + fmt(lastM) : "add metres in GET Forecast")}</div>`; })() : ""}
-  <div class="tiles">${tile("Items issued", iss.length, "lines this month", "dark")}${tile("Value issued", R(value), "items with a price")}${store === "drill" ? tile("GET issued", R(getV), GET_KEYS.map(([k, n]) => { const q = iss.filter(x => x.getKey === k).reduce((a, x) => a + num(x.qty), 0); return q ? q + " " + (q === 1 ? n.slice(0, -1) : n).toLowerCase() : ""; }).filter(Boolean).join(" · ") || "none") : ""}${tile("Received", rec.length, "lines this month")}${tile("Low stock", low.length, low.map(i => esc(i.name)).slice(0, 3).join(", ") || "none")}</div>
+  <div class="tiles">${tile("Items issued", iss.length, "lines this month", "dark")}${tile("Value issued", R(value), "items with a price")}${store === "drill" ? tile("GET issued", R(getV), GET_KEYS.map(([k, n]) => { const q = iss.filter(x => x.getKey === k).reduce((a, x) => a + num(x.qty), 0); return q ? q + " " + (q === 1 ? n.slice(0, -1) : n).toLowerCase() : ""; }).filter(Boolean).join(" · ") || "none") : ""}${tile("Received", rec.length, "lines this month")}${tile("Low stock", low.length, low.map(i => esc(i.name)).slice(0, 3).join(", ") || "none")}${(() => { const d = [...duplicates().keys()].map(id => moves.find(x => x.id === id)).filter(x => x && x.store === store && inMonth(x, month)).length; return d ? tile("Possible duplicates", d, "check them on Issue / Receive", "") : ""; })()}</div>
   <section class="card"><h2>Totals per machine</h2><div class="tbl"><table><thead><tr><th>Machine</th>${OILS.map(o => `<th class="r">${o}${o === "Grease" ? "" : " (20 L)"}</th>`).join("")}<th class="r">Spares items issued</th><th class="r">Value</th><th>Status</th></tr></thead><tbody>
     ${mt.map(r => `<tr><td><b>${r.mc}</b></td>${OILS.map(o => `<td class="num">${nq(r.oils[o]) || ""}</td>`).join("")}<td class="num">${r.spares || ""}</td><td class="num">${r.value ? R(r.value) : ""}</td>
       <td>${canLog() ? `<input data-status="${r.mc}" value="${esc(status[r.mc] || "")}" placeholder="Working" style="min-width:160px">` : esc(status[r.mc] || "")}</td></tr>`).join("")}
@@ -552,6 +565,8 @@ app.addEventListener("submit", async e => {
     qty, date: $(P + "Date").value || today(), note: $(P + "Note").value.trim(), byName: myName(), byUid: user.uid, createdAt: Date.now() };
   if (kind === "out") Object.assign(rec, { shift: $("oShift").value, machine: $("oMach").value, to: $("oTo").value.trim() });
   else Object.assign(rec, { from: $("iFrom").value.trim(), ref: $("iRef").value.trim() });
+  const twin = moves.find(x => dupKey(x) === dupKey(rec));
+  if (twin && !confirm(`This looks like a line already logged:\n${twin.kind === "issue" ? "Issued" : "Received"} ${nq(twin.qty)} ${twin.unit || ""} × ${twin.item} on ${fmt(twin.date)}${twin.machine ? " for " + twin.machine : ""}${twin.to ? " to " + twin.to : ""}${twin.from ? " from " + twin.from : ""}, logged by ${twin.byName || "someone"}${twin.createdAt ? " at " + new Date(twin.createdAt).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" }) : ""}.\n\nIs this a second, separate ${twin.kind === "issue" ? "issue" : "delivery"}? Tap OK to log it, or Cancel if it's the same one.`)) { err("Not logged: it was the same as a line already there."); return; }
   if (kind === "out" && cat === "PPE" && !rec.to) { err("Type who the PPE is for, so it shows on the PPE register."); return; }
   if (kind === "out" && it) { const s = stockOf(store, it); if (s.onHand !== null && qty > s.onHand && !confirm(`The app shows ${nq(s.onHand)} ${it.unit || ""} ${it.name} in the store. Issue ${qty} anyway?`)) return; }
   err("");
