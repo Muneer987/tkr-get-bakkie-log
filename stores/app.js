@@ -69,7 +69,7 @@ const DEFAULT_ITEMS = [
 
 /* ---------- state ---------- */
 let user = null, email = "", me = null, managers = [], staff = [], items = DEFAULT_ITEMS.slice(), itemsSaved = false, moves = [], counts = [], status = {}, settings = { supervisor: "Edwin Khonkhobe" };
-let registering = false;
+let registering = false, fcMetres = null;
 let store = lsGet("tkr-st-store") || "drill", tab = lsGet("tkr-st-tab") || "log", month = today().slice(0, 7), ppeStore = "all", subs = [], picked = null, gateMode = "pick", gateMsg = "", form = { out: {}, in: {} };
 const isAdmin = () => ADMINS.includes(email);
 const isManager = () => isAdmin() || (!!email && managers.includes(email));
@@ -220,16 +220,72 @@ async function seedOctoberGet() {
   } catch (e) { console.warn(e); } finally { seedingGet = false; }
 }
 
+/* Later reports (Drill Stores closing 21/10, Rompad reports 22–24/10), loaded the same way, once each.
+   m = [date, kind, store, cat, itemId or "", item name, unit, qty, machine, to/from, by, note]   c = [date, store, itemId, count, by] */
+const REPORT_SEEDS = [
+  { id: "seed-2026-10-21-drill", msg: "Drill Stores closing 21/10 loaded", m: [
+    ["2026-10-21", "issue", "drill", "GET", "get-bit", "", "", 1, "TDR015", "Thomas", "Olebogeng", "Drill Stores closing 21/10"]],
+    c: [["2026-10-21", "drill", "get-bit", 1, "Olebogeng"], ["2026-10-21", "drill", "get-rod", 3, "Olebogeng"], ["2026-10-21", "drill", "get-shank", 3, "Olebogeng"]] },
+  { id: "seed-2026-10-22-24-rompad", msg: "Rompad reports 22–24/10 loaded", m: [
+    ...[["Degreaser", "Spares", "ea", 2], ["Diesel engine oil 15W40", "Engine oil", "20L", 3, "oil-eng"], ["Compressor oil 68", "Rockdrill / compressor oil", "20L", 5], ["Antifreeze", "Spares", "ea", 1],
+      ["Compressor oil 46", "Rockdrill / compressor oil", "20L", 2, "oil-comp"], ["Rockdrill oil 220", "Rockdrill / compressor oil", "20L", 2], ["Engine gearlube 80W-90", "Spares", "ea", 3],
+      ["Lithium complex EP2 grease", "Grease", "ea", 1], ["Transmission fluid", "Spares", "ea", 1], ["Spirax axle oil", "Spares", "ea", 2], ["Rod catcher", "Spares", "ea", 3]]
+      .map(([n, cat, u, q, id]) => ["2026-10-22", "receive", "rompad", cat, id || "", n, u, q, "", "Drill Stores (site office)", "Phumzile", "Moved from the site office store to Rompad 22/10"]),
+    ["2026-10-23", "receive", "rompad", "Moil locks", "moil-lock", "", "", 4, "", "", "Phumzile", "Rompad day shift 23/10"],
+    ["2026-10-23", "receive", "rompad", "Moil locks", "", "Moil / rubber stopper", "ea", 2, "", "", "Phumzile", "Rompad day shift 23/10"],
+    ["2026-10-23", "issue", "rompad", "PPE", "ppe-gloves", "", "", 5, "", "", "Phumzile", "Rompad day shift 23/10"],
+    ["2026-10-23", "issue", "rompad", "PPE", "ppe-ear", "", "", 2, "", "", "Phumzile", "Rompad day shift 23/10"],
+    ["2026-10-23", "issue", "rompad", "Moil locks", "moil-lock", "", "", 2, "", "", "Phumzile", "Rompad day shift 23/10"],
+    ["2026-10-23", "issue", "rompad", "Moil locks", "moil-pin", "", "", 2, "", "", "Phumzile", "Rompad day shift 23/10"],
+    ["2026-10-23", "issue", "rompad", "Moil locks", "", "Moil / rubber stopper", "ea", 1, "", "", "Phumzile", "Rompad day shift 23/10"],
+    ["2026-10-23", "issue", "rompad", "Spares", "", "Circlip 30", "ea", 1, "", "", "Phumzile", "Rompad day shift 23/10"],
+    ["2026-10-23", "issue", "rompad", "Spares", "", "Rubber plug 30", "ea", 1, "", "", "Phumzile", "Rompad day shift 23/10"],
+    ["2026-10-23", "issue", "rompad", "Engine oil", "", "Engine oil 15W40 (litres)", "L", 35, "", "", "Phumzile", "Rompad day shift 23/10"],
+    ["2026-10-24", "receive", "rompad", "Spares", "", "Service kit TDR015", "kit", 1, "", "", "Phumzile", "Rompad day shift 24/10"],
+    ["2026-10-24", "issue", "rompad", "PPE", "ppe-gloves", "", "", 9, "", "", "Phumzile", "Rompad day shift 24/10"],
+    ["2026-10-24", "issue", "rompad", "PPE", "ppe-resp", "", "", 5, "", "", "Phumzile", "Rompad day shift 24/10 (dust masks)"],
+    ["2026-10-24", "issue", "rompad", "PPE", "ppe-glasses", "", "", 4, "", "", "Phumzile", "Rompad day shift 24/10 (safety goggles)"],
+    ["2026-10-24", "issue", "rompad", "Grease", "grease", "", "", 9, "", "", "Phumzile", "Rompad day shift 24/10"],
+    ["2026-10-24", "issue", "rompad", "Engine oil", "oil-eng", "", "", 1, "", "Simon", "Phumzile", "To Simon for TDR013"],
+    ["2026-10-24", "issue", "rompad", "Spares", "", "Antifreeze", "ea", 1, "", "Simon", "Phumzile", "To Simon for TDR013"],
+    ["2026-10-24", "issue", "rompad", "Spares", "", "Degreaser", "L", 5, "", "Simon", "Phumzile", "To Simon for TDR013"],
+    ["2026-10-24", "issue", "rompad", "Hydraulic oil", "oil-hyd", "", "", 1, "", "", "Phumzile", "Rompad day shift 24/10"]],
+    c: [["2026-10-24", "rompad", "oil-hyd", 0, "Phumzile"], ["2026-10-24", "rompad", "ppe-gloves", 0, "Phumzile"], ["2026-10-24", "rompad", "ppe-glasses", 1, "Phumzile"],
+      ["2026-10-24", "rompad", "ppe-resp", 35, "Phumzile"], ["2026-10-24", "rompad", "oil-eng", 2, "Phumzile"], ["2026-10-24", "rompad", "oil-comp", 1, "Phumzile"], ["2026-10-24", "rompad", "moil-lock", 2, "Phumzile"]] },
+];
+let seedingRep = false;
+async function seedReports() {
+  if (seedingRep || !boss || !isAdmin() || !navigator.onLine) return; seedingRep = true;
+  try {
+    for (const S of REPORT_SEEDS) {
+      const flag = doc(db, "stConfig", S.id); if ((await getDoc(flag)).exists()) continue;
+      const at = (d, h, i) => Date.parse(d + "T00:00:00+02:00") + h * 3600e3 + i * 1000;
+      let n = 0;
+      for (const [i, [date, kind, st, cat, itemId, name, unit, qty, machine, who, by, note]] of S.m.entries()) {
+        const it = items.find(x => x.id === itemId) || DEFAULT_ITEMS.find(x => x.id === itemId);
+        await setDoc(doc(db, "stMoves", `${S.id}-m${i}`), { kind, store: st, cat, itemId: it?.id || "", item: it?.name || name, getKey: it?.getKey || "", unit: it ? (it.unit || "") : unit, price: it?.price ? num(it.price) : 0,
+          qty, date, shift: "Day", machine, ...(kind === "issue" ? { to: who } : { from: who, ref: "" }), note, byName: by, byUid: user.uid, src: "report", createdAt: at(date, kind === "receive" ? 8 : 12, i) }); n++;
+      }
+      for (const [i, [date, st, itemId, count, by]] of S.c.entries()) {
+        const it = items.find(x => x.id === itemId) || DEFAULT_ITEMS.find(x => x.id === itemId);
+        await setDoc(doc(db, "stCounts", `${S.id}-c${i}`), { store: st, itemId, item: it?.name || itemId, getKey: it?.getKey || "", date, count, byName: by, byUid: user.uid, src: "report", createdAt: at(date, 23, i) }); n++;
+      }
+      await setDoc(flag, { done: Date.now(), by: email, lines: n }); toast(S.msg);
+    }
+  } catch (e) { console.warn(e); } finally { seedingRep = false; }
+}
+
 /* ---------- live data ---------- */
 function startApp() {
   gate.hidden = true; app.hidden = false; $("outBtn").hidden = false;
   $("who").textContent = (me ? me.name + " · store controller" : email + (isAdmin() ? " · admin" : " · manager"));
   const live = (name, set) => subs.push(onSnapshot(collection(db, name), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => { console.warn(e); netNote("Couldn't load everything. Check the signal."); }));
   live("stMoves", v => moves = v); live("stCounts", v => counts = v);
-  if (boss && isAdmin()) setTimeout(seedOctoberGet, 1500);
+  if (boss && isAdmin()) setTimeout(async () => { await seedOctoberGet(); await seedReports(); }, 1500);
   subs.push(onSnapshot(doc(db, "stConfig", "items"), s => { itemsSaved = s.exists(); items = itemsSaved ? (s.data().list || []) : DEFAULT_ITEMS.slice(); render(); }, () => {}));
   subs.push(onSnapshot(doc(db, "stConfig", "status"), s => { status = s.exists() ? (s.data().machines || {}) : {}; render(); }, () => {}));
   subs.push(onSnapshot(doc(db, "stConfig", "settings"), s => { if (s.exists()) settings = Object.assign({ supervisor: "" }, s.data()); render(); }, () => {}));
+  if (boss) subs.push(onSnapshot(collection(db, "fcMetres"), s => { fcMetres = s.docs.map(d => d.data()); render(); }, () => {}));
   if (isAdmin()) subs.push(onSnapshot(collection(db, "stUsers"), s => { staff = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name)); render(); }, () => {}));
   render();
 }
@@ -334,6 +390,11 @@ function dashView() {
   const days = []; const d0 = parse(month + "-01"); const dn = new Date(d0.getFullYear(), d0.getMonth() + 1, 0).getDate();
   for (let i = 1; i <= dn; i++) { const ds = month + "-" + pad(i); days.push({ ds, lines: iss.filter(x => x.date === ds).length, value: iss.filter(x => x.date === ds).reduce((n, x) => n + val(x), 0) }); }
   return `<div class="strip"><div><h2>${STORES[store].name} · ${monthName(month)}</h2><div class="muted">${STORES[store].sub}</div></div><div class="row">${monthPick()}<button class="primary" data-report="1">Download consumption report</button></div></div>
+  ${store === "drill" && fcMetres ? (() => { const end = month === today().slice(0, 7) ? today() : month + "-31";
+      const mm = fcMetres.filter(x => (x.date || "").slice(0, 7) === month && x.date < end).reduce((n, x) => n + num(x.metres), 0);
+      const lastM = fcMetres.filter(x => (x.date || "").slice(0, 7) === month).reduce((d, x) => x.date > d ? x.date : d, "");
+      const getC = iss.filter(x => ["BIT", "ROD", "SHANK"].includes(x.getKey) && x.date <= lastM).reduce((n, x) => n + val(x), 0);   // same days as the metres
+      return `<div class="tiles">${tile("GET cost per metre", mm ? "R" + (getC / mm).toFixed(2) : "–", mm ? `1 to ${fmt(lastM).slice(0, 5)}: ${R(getC)} bits, rods and shanks ÷ ${String(Math.round(mm * 10) / 10).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} m · standard R39.72/m` : "no metres yet", "dark")}${tile("Metres month to date", mm ? (Math.round(mm * 10) / 10).toFixed(1) + " m" : "–", lastM ? "captured up to " + fmt(lastM) : "add metres in GET Forecast")}</div>`; })() : ""}
   <div class="tiles">${tile("Items issued", iss.length, "lines this month", "dark")}${tile("Value issued", R(value), "items with a price")}${store === "drill" ? tile("GET issued", R(getV), GET_KEYS.map(([k, n]) => { const q = iss.filter(x => x.getKey === k).reduce((a, x) => a + num(x.qty), 0); return q ? q + " " + (q === 1 ? n.slice(0, -1) : n).toLowerCase() : ""; }).filter(Boolean).join(" · ") || "none") : ""}${tile("Received", rec.length, "lines this month")}${tile("Low stock", low.length, low.map(i => esc(i.name)).slice(0, 3).join(", ") || "none")}</div>
   <section class="card"><h2>Totals per machine</h2><div class="tbl"><table><thead><tr><th>Machine</th>${OILS.map(o => `<th class="r">${o}${o === "Grease" ? "" : " (20 L)"}</th>`).join("")}<th class="r">Spares items issued</th><th class="r">Value</th><th>Status</th></tr></thead><tbody>
     ${mt.map(r => `<tr><td><b>${r.mc}</b></td>${OILS.map(o => `<td class="num">${nq(r.oils[o]) || ""}</td>`).join("")}<td class="num">${r.spares || ""}</td><td class="num">${r.value ? R(r.value) : ""}</td>

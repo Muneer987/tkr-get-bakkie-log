@@ -46,7 +46,9 @@ const DEFAULTS = { price: { BIT: 9000, ROD: 8621, SHANK: 6200, HAMMER: 48000 }, 
 let user = null, email = "", managers = [], metres = [], issues = [], counts = [], settings = structuredClone(DEFAULTS);
 // GET issued and received at the Drill Stores (Stores section) come in by themselves, with the prices set there
 let stMoves = [], stCounts = [], stPrice = {};
-const fromStores = () => stMoves.filter(x => x.getKey && x.kind === "issue").map(x => ({ id: x.id, date: x.date, shift: x.shift || "", rig: x.machine || "", item: x.getKey, qty: num(x.qty), to: x.to || "", by: x.byName || "", src: "stores" }));
+const rigName = m => /^TDR\d{3}$/.test(m || "") ? "TDR " + m.slice(3) : (m || "");
+const fromStores = () => stMoves.filter(x => x.getKey && x.kind === "issue").map(x => { const n = x.note || "", rg = n.match(/TDR \d{3}( \/ TDR \d{3})*/), bl = n.match(/block ([^·]+)/);
+  return { id: x.id, date: x.date, shift: x.shift || "", rig: rigName(x.machine) || (rg ? rg[0] : ""), block: bl ? bl[1].trim() : "", item: x.getKey, qty: num(x.qty), to: x.to || "", by: x.byName || "", note: rg || bl ? "" : n, src: "stores" }; });
 const allIssues = () => issues.concat(fromStores());
 const allCounts = () => counts.concat(stCounts.filter(x => x.getKey).map(x => ({ id: x.id, date: x.date, item: x.getKey, count: num(x.count), received: 0, by: x.byName || "", src: "stores" })),
   stMoves.filter(x => x.getKey && x.kind === "receive").map(x => ({ id: x.id, date: x.date, item: x.getKey, count: "", received: num(x.qty), by: (x.from ? x.from + " · " : "") + (x.byName || ""), src: "stores" })));
@@ -166,7 +168,7 @@ function explain(c) {
 }
 
 /* ---------- rendering ---------- */
-const tabs = [["dash", "Dashboard"], ["metres", "Metres"], ["issues", "GET issued"], ["stock", "Stock"], ["settings", "Settings"], ["import", "Import"]];
+const tabs = [["dash", "Dashboard"], ["metres", "Metres"], ["issues", "GET issued"], ["stock", "GET stock"], ["settings", "Settings"], ["import", "Import"]];
 function render() {
   if (app.hidden) return;
   const c = calc(reportDate);
@@ -185,16 +187,24 @@ function dash(c) {
   const ex = explain(c), w = c.week, wtdRm = w.metres.toDate ? w.cost.toDate / w.metres.toDate : 0, mRm = c.month.metres ? c.month.cost / c.month.metres : 0;
   const orderNowCost = ITEMS.reduce((n, [k]) => n + c.orderNow[k] * settings.price[k], 0);
   const nextCost = ITEMS.reduce((n, [k]) => n + c.next[k].order * settings.price[k], 0);
-  const empty = !metres.length && !issues.length;
+  const empty = !metres.length && !allIssues().length;
   return `
   <div class="strip">
     <div><h2>${esc(dayName(c.rd))} ${fmt(c.rd)}</h2><div class="muted">This week ${short(c.weekStart)} – ${short(c.weekEnd)} · actuals up to ${fmt(c.upToCal)}</div></div>
     <div class="row"><label>Report date <input type="date" id="rd" value="${c.rd}"></label>
-      <button id="msgBtn">WhatsApp message</button><button class="primary" id="xlBtn">Export to Excel</button></div>
+      <button id="msgBtn">WhatsApp message</button><button class="primary" id="xlBtn">Export GET tracker (Excel)</button></div>
   </div>
   ${empty ? `<div class="notice"><b class="t">No data yet</b>${isAdmin() ? "Tap Import and choose your GET tracker file to bring in October so far, or add metres, GET issued and a stock count." : "Ask admin to import the GET tracker or add the metres."}</div>` : ""}
   <div class="notice"><b class="t">Why the forecast looks like this</b><ul>${ex.out.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>
   ${ex.warn.length ? `<div class="notice warn"><b class="t">Check</b><ul>${ex.warn.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
+  <section class="card" style="background:#111;color:#f2efe8;border-color:#d4a12a">
+    <h2 style="color:#d4a12a">GET cost per metre</h2>
+    <div class="tiles" style="margin-bottom:0">
+      ${tile("Month to date", R2(mRm), `${R(c.month.cost)} ÷ ${M1(c.month.metres)} m · 1 to ${short(c.upToCal)}`, "dark")}
+      ${tile("This week to date", R2(wtdRm), w.metres.toDate ? `${R(w.cost.toDate)} ÷ ${M1(w.metres.toDate)} m` : "no metres yet this week", "dark")}
+      ${tile("Last week", R2(w.metres.last ? w.cost.last / w.metres.last : 0), `${short(c.lastStart)} – ${short(c.lastEnd)}`, "dark")}
+      ${tile("Standard", R2(c.std), "if every item reaches its target life", "dark")}
+    </div></section>
   <section class="card"><h2>Metres to date · ${MONTHS_FULL[+c.monthStart.slice(5, 7) - 1]} ${c.monthStart.slice(0, 4)}</h2>
     <div class="tiles" style="margin-bottom:0">
       ${tile("All rigs combined", M1(c.month.metres) + " m", `1 to ${short(c.upToCal)} · this week ${M1(w.metres.toDate)} m`, "dark")}
@@ -270,34 +280,13 @@ function metresView() {
 }
 function issuesView() {
   const list = allIssues();
-  return `<div class="info">GET issued and received at the Drill Stores (the Stores section) comes in here by itself, with the prices set in Stores. Only add GET here that was not logged in Stores, or it counts twice.</div>
-    <section class="card"><h2>Add GET issued</h2>
-    <form id="fIssues" class="grid" autocomplete="off">
-      <label>Date <input type="date" name="date" value="${today()}" required></label>
-      <label>Shift <select name="shift"><option>Day</option><option>Night</option></select></label>
-      <label>Rig <select name="rig">${[...RIGS, "TDR 013 / TDR 015"].map(r => `<option>${r}</option>`).join("")}</select></label>
-      <label>Item <select name="item">${ITEMS.map(([k, n, l]) => `<option value="${k}">${l}</option>`).join("")}</select></label>
-      <label>Qty <input name="qty" inputmode="numeric" value="1" required></label>
-      <label>Issued to <input name="to"></label>
-      <label>Issued by <input name="by"></label>
-      <div style="display:flex;align-items:flex-end"><button class="primary" style="width:100%">Add</button></div>
-    </form></section>
-    <section class="card"><h2>Latest GET issued</h2>${listOf(list.map(x => ({ ...x, _c: x.src === "stores" ? "" : "fcIssues" })), x => `${x.src === "stores" ? '<span class="pill closed">Stores</span> ' : ""}${fmt(x.date)} ${esc(x.shift || "")} · <b>${esc(x.qty)} × ${esc((STOCK_ITEMS.find(i => i[0] === x.item) || [])[2] || x.item)}</b> · ${esc(x.rig || "")} ${x.to ? "· to " + esc(x.to) : ""} ${x.by ? "· by " + esc(x.by) : ""}`)}</section>`;
+  return `<div class="info">GET issued comes from the Drill Stores by itself. The store controllers log it in <a href="../stores/">Stores</a> → Drill Stores → Issue, and it shows here and in the forecast straight away.</div>
+    <section class="card"><h2>GET issued</h2>${listOf(list.map(x => ({ ...x, _c: x.src === "stores" ? "" : "fcIssues" })), x => `${x.src === "stores" ? '<span class="pill closed">Drill Stores</span> ' : '<span class="pill">Earlier import</span> '}${fmt(x.date)} ${esc(x.shift || "")} · <b>${esc(x.qty)} × ${esc((STOCK_ITEMS.find(i => i[0] === x.item) || [])[2] || x.item)}</b> · ${esc(x.rig || "")} ${x.to ? "· to " + esc(x.to) : ""} ${x.by ? "· by " + esc(x.by) : ""}`)}</section>`;
 }
 function stockView(c) {
-  return `<section class="card"><h2>Stock count or GET received</h2>
-    <div class="info">Stock counts and GET received at the Drill Stores (the Stores section) come in here by themselves. You only need this form for GET that was not logged in Stores.</div>
-    <p class="muted" style="margin-top:0">Type the count from the closing report. If stock was received from the supplier, add it under Received.</p>
-    <form id="fStock" class="grid" autocomplete="off">
-      <label>Date <input type="date" name="date" value="${addDays(today(), -1)}" required></label>
-      <label>Item <select name="item">${STOCK_ITEMS.map(([k, n, l]) => `<option value="${k}">${l}</option>`).join("")}</select></label>
-      <label>Count in store <input name="count" inputmode="numeric"></label>
-      <label>Received <input name="received" inputmode="numeric"></label>
-      <label>Counted by <input name="by"></label>
-      <div style="display:flex;align-items:flex-end"><button class="primary" style="width:100%">Add</button></div>
-    </form>
-    <p class="muted">On hand now: ${STOCK_ITEMS.map(([k, n]) => `${n.toLowerCase()} ${c.stock[k] ?? "–"}`).join(" · ")}</p></section>
-    <section class="card"><h2>Latest counts</h2>${listOf(allCounts().map(x => ({ ...x, _c: x.src === "stores" ? "" : "fcCounts" })), x => `${x.src === "stores" ? '<span class="pill closed">Stores</span> ' : ""}${fmt(x.date)} · <b>${esc((STOCK_ITEMS.find(i => i[0] === x.item) || [])[2] || x.item)}</b> ${x.count !== "" && x.count != null ? "· count " + esc(x.count) : ""} ${num(x.received) ? "· received " + esc(x.received) : ""} ${x.by ? "· " + esc(x.by) : ""}`)}</section>`;
+  return `<div class="info">GET stock comes from the Drill Stores by itself: the last stock count there, plus what was received, less what was issued. Counts and deliveries are logged in <a href="../stores/">Stores</a> → Drill Stores.</div>
+    <section class="card"><h2>GET stock now</h2><div class="tiles" style="margin-bottom:0">${STOCK_ITEMS.map(([k, n]) => tile(n, c.stock[k] ?? "–", c.stockDate[k] ? "counted " + fmt(c.stockDate[k]) + (c.stockDate[k] < c.upToCal ? ", moves since then included" : "") : "no stock count yet")).join("")}</div></section>
+    <section class="card"><h2>Counts and deliveries</h2>${listOf(allCounts().map(x => ({ ...x, _c: x.src === "stores" ? "" : "fcCounts" })), x => `${x.src === "stores" ? '<span class="pill closed">Drill Stores</span> ' : '<span class="pill">Earlier import</span> '}${fmt(x.date)} · <b>${esc((STOCK_ITEMS.find(i => i[0] === x.item) || [])[2] || x.item)}</b> ${x.count !== "" && x.count != null ? "· count " + esc(x.count) : ""} ${num(x.received) ? "· received " + esc(x.received) : ""} ${x.by ? "· " + esc(x.by) : ""}`)}</section>`;
 }
 function settingsView() {
   const f = (k, i) => `<input name="${k}.${i}" inputmode="decimal" value="${esc(settings[k][i])}">`;
@@ -460,52 +449,178 @@ function message(c) {
 }
 
 /* ---------- branded Excel ---------- */
+/* ---------- Excel export in the layout of the Daily GET Consumption Tracker ----------
+   Same tabs as the tracker (Daily report, Prices, Consumption, Production, Stock, This week, Next week), TKR-branded, values worked out by the app. */
 async function exportExcel(c) {
   await loadLib("../lib/exceljs.min.js");
-  const ExcelJS = window.ExcelJS, wb = new ExcelJS.Workbook(); wb.creator = "TKR Operations";
+  const ExcelJS = window.ExcelJS, wb = new ExcelJS.Workbook(); wb.creator = "TKR Operations"; wb.created = new Date();
   let logo = null; try { logo = wb.addImage({ buffer: await (await fetch("../icons/icon-512.png")).arrayBuffer(), extension: "png" }); } catch {}
-  const BLACK = "FF111111", HEAD = "FF262626", GOLD = "FFD4A12A", CREAM = "FFFFF8E6", WHITE = "FFFFFFFF", GRID = "FFD9D3C5";
-  const fill = x => ({ type: "pattern", pattern: "solid", fgColor: { argb: x } }), thin = { style: "thin", color: { argb: GRID } }, box = { top: thin, left: thin, bottom: thin, right: thin };
-  const sheet = (name, widths, title) => {
-    const ws = wb.addWorksheet(name, { pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 } });
-    ws.columns = widths.map(w => ({ width: w })); const cols = Math.max(6, widths.length);
-    for (let r = 1; r <= 4; r++) { ws.getRow(r).height = r === 1 ? 8 : 22; for (let k = 1; k <= cols; k++) ws.getCell(r, k).fill = fill(BLACK); }
-    for (let k = 1; k <= cols; k++) ws.getCell(5, k).fill = fill(GOLD); ws.getRow(5).height = 4;
-    if (logo !== null) ws.addImage(logo, { tl: { col: 0.15, row: 1.05 }, ext: { width: 62, height: 62 } });
-    ws.getCell("B2").value = title; ws.getCell("B2").font = { name: "Arial", size: 18, bold: true, color: { argb: WHITE } };
-    ws.getCell("B3").value = "TKR OPERATIONS  ·  GROUND ENGAGING TOOLS"; ws.getCell("B3").font = { name: "Arial", size: 9, bold: true, color: { argb: GOLD } };
-    ws.getCell("B4").value = `Report date ${fmt(c.rd)} · actuals up to ${fmt(c.upToCal)}`; ws.getCell("B4").font = { name: "Arial", size: 10, color: { argb: "FFE8E2D4" } };
-    ws.views = [{ showGridLines: false }]; return ws;
-  };
-  const table = (ws, r0, head, rows, totLast) => {
-    const h = ws.getRow(r0); h.height = 28;
-    head.forEach((t, i) => { const x = h.getCell(i + 1); x.value = t; x.font = { name: "Arial", size: 10, bold: true, color: { argb: WHITE } }; x.fill = fill(HEAD); x.border = box; x.alignment = { vertical: "middle", horizontal: i ? "center" : "left", wrapText: true }; });
-    rows.forEach((vals, n) => { const row = ws.getRow(r0 + 1 + n); row.values = vals; row.height = 20; const tot = totLast && n === rows.length - 1;
-      for (let k = 1; k <= vals.length; k++) { const x = row.getCell(k); x.border = tot ? { ...box, top: { style: "medium", color: { argb: GOLD } } } : box; x.font = { name: "Arial", size: 10, bold: tot || k === 1 }; x.alignment = { vertical: "middle", horizontal: typeof vals[k - 1] === "number" ? "center" : "left", wrapText: true }; if (n % 2 && !tot) x.fill = fill(CREAM); } });
-    return r0 + rows.length + 2;
-  };
-  const w = c.week, ex = explain(c);
-  const oc = ITEMS.reduce((n, [k]) => n + c.orderNow[k] * settings.price[k], 0), nc = ITEMS.reduce((n, [k]) => n + c.next[k].order * settings.price[k], 0);
-  const ws = sheet("Forecast", [28, 15, 17, 19, 17, 16], "GET Forecast");
+  const X = { BLACK: "FF111111", HEAD: "FF262626", GOLD: "FFD4A12A", CREAM: "FFFFF8E6", TOT: "FFFFF2CC", WHITE: "FFFFFFFF", GRID: "FFD9D3C5", MUTED: "FF6B6558", RED: "FFB3261E", GREEN: "FF2E7D4F", YEL: "FFFFF2B3" };
+  const fill = x => ({ type: "pattern", pattern: "solid", fgColor: { argb: x } }), thin = { style: "thin", color: { argb: X.GRID } }, box = { top: thin, left: thin, bottom: thin, right: thin };
+  const F = (o = {}) => Object.assign({ name: "Arial", size: 10, color: { argb: X.BLACK } }, o);
+  const D = s => { if (!s) return null; const [y, m, d] = s.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)); };
+  const MONEY = '"R" #,##0', MONEY2 = '"R" #,##0.00', DEC1 = "#,##0.0", DATE = "dd/mm/yyyy";
+  function sheet(name, widths, title, sub) {
+    const ws = wb.addWorksheet(name, { views: [{ showGridLines: false }], pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 } });
+    ws.columns = widths.map(w => ({ width: w })); const n = Math.max(6, widths.length);
+    for (let r = 1; r <= 4; r++) { ws.getRow(r).height = r === 1 ? 8 : 20; for (let k = 1; k <= n; k++) ws.getCell(r, k).fill = fill(X.BLACK); }
+    ws.getRow(5).height = 4; for (let k = 1; k <= n; k++) ws.getCell(5, k).fill = fill(X.GOLD);
+    if (logo !== null) ws.addImage(logo, { tl: { col: 0.08, row: 1.08 }, ext: { width: 56, height: 56 } });
+    const put = (r, v, f) => { const x = ws.getCell(r, 2); x.value = v; x.font = f; x.alignment = { vertical: "middle" }; };
+    put(2, title, F({ size: 15, bold: true, color: { argb: X.WHITE } }));
+    put(3, "TKR OPERATIONS  |  GROUND ENGAGING TOOLS", F({ size: 9, bold: true, color: { argb: X.GOLD } }));
+    put(4, sub || `Report date ${fmt(c.upToCal)} · month ${fmt(c.monthStart)} to ${fmt(c.upToCal)}`, F({ size: 9, color: { argb: "FFCFC8B8" } }));
+    ws.views = [{ state: "frozen", ySplit: 5, showGridLines: false }]; return ws;
+  }
+  function heading(ws, r, t) { const x = ws.getCell(r, 1); x.value = t; x.font = F({ size: 12, bold: true }); ws.getRow(r).height = 22; return r + 1; }
+  function head(ws, r, labels) { const row = ws.getRow(r); row.height = 30; labels.forEach((l, i) => { const x = row.getCell(i + 1); x.value = l; x.font = F({ bold: true, color: { argb: X.WHITE } }); x.fill = fill(X.HEAD); x.border = box; x.alignment = { vertical: "middle", horizontal: i ? "center" : "left", wrapText: true }; }); return r + 1; }
+  function line(ws, r, vals, i, o = {}) {
+    const row = ws.getRow(r); row.height = o.h || 18;
+    vals.forEach((v, k) => { const x = row.getCell(k + 1); x.value = v === "" || v === undefined ? null : v; x.border = box; x.font = F({ bold: !!o.bold || (o.boldFirst && k === 0) });
+      x.alignment = { vertical: "middle", horizontal: typeof v === "number" || v instanceof Date ? "center" : "left", wrapText: true };
+      const f = (o.fmt || {})[k]; if (f) x.numFmt = f; if (v instanceof Date) x.numFmt = DATE;
+      if ((o.red || []).includes(k) && typeof v === "number" && v > 0) x.font = F({ bold: true, color: { argb: X.RED } });
+      if (o.tot) { x.fill = fill(X.TOT); x.border = { ...box, top: { style: "medium", color: { argb: X.GOLD } } }; x.font = F({ bold: true }); } else if (i % 2) x.fill = fill(X.CREAM); });
+    return r + 1;
+  }
+  function note(ws, r, t, n = 8) { ws.mergeCells(r, 1, r, n); const x = ws.getCell(r, 1); x.value = t; x.font = F({ size: 9, italic: true, color: { argb: X.MUTED } }); x.alignment = { wrapText: true, vertical: "top" }; ws.getRow(r).height = 26; return r + 1; }
+  const freezeAt = (ws, row) => { ws.views = [{ state: "frozen", ySplit: row, showGridLines: false }]; };
+
+  const NAME = { BIT: "Bit", ROD: "Rod", SHANK: "Shank", HAMMER: "Hammer" }, CODE = k => k + "-01";
+  const price = k => num(settings.price[k]), life = k => num(settings.life[k]);
+  const ms = c.monthStart, upTo = c.upToCal, inM = x => x.date >= ms && x.date <= upTo;
+  const iss = allIssues().filter(inM).sort((a, b) => a.date.localeCompare(b.date) || String(a.shift).localeCompare(String(b.shift)));
+  const cnts = allCounts().filter(x => x.date <= upTo);
+  const mtdQty = k => iss.filter(x => x.item === k).reduce((n, x) => n + num(x.qty), 0);
+  const mM = c.month.metres, mCost = c.month.cost, dM = c.day.metres, dCost = c.day.cost;
+
+  // 1. Daily report
+  let ws = sheet("Daily report", [30, 16, 16, 16, 16, 14, 14, 16, 16, 30], "TKR daily GET report");
   let r = 7;
-  [...ex.out, ...ex.warn].forEach(t => { const x = ws.getCell(r, 1); ws.mergeCells(r, 1, r, 6); x.value = t; x.font = { name: "Arial", size: 10, italic: true }; x.alignment = { wrapText: true, vertical: "top" }; ws.getRow(r).height = 30; r++; });
-  r++;
-  r = table(ws, r, ["This week " + short(c.weekStart) + " – " + short(c.weekEnd), "Last week", "This week to date", "Rest of week (forecast)", "This week total"], [
-    ...ITEMS.map(([k, n]) => [n, w.qty[k].last, w.qty[k].toDate, w.qty[k].rest, w.qty[k].toDate + w.qty[k].rest]),
-    ["Metres", r1(w.metres.last), r1(w.metres.toDate), r1(w.metres.rest), r1(w.metres.toDate + w.metres.rest)],
-    ["GET cost (R)", Math.round(w.cost.last), Math.round(w.cost.toDate), Math.round(w.cost.rest), Math.round(w.cost.toDate + w.cost.rest)]], true);
-  r = table(ws, r, ["Stock and orders", "Stock on hand", "Order now", "Next week need", "Spare", "Order next week"], [
-    ...ITEMS.map(([k, n]) => [n, c.stock[k] ?? "", c.orderNow[k], c.next[k].need, c.next[k].spare, c.next[k].order]),
-    ["Order cost (R)", "", Math.round(oc), "", "", Math.round(nc)]], true);
-  const t = ws.getCell(r, 1); t.value = `Total order both weeks: ${R(oc + nc)}`; t.font = { name: "Arial", size: 12, bold: true };
-  const ws2 = sheet("Metres", [12, 9, 11, 13, 11, 18], "GET Forecast – Metres");
-  const mrows = metres.filter(x => x.date >= c.monthStart && x.date <= c.upToCal).sort((a, b) => a.date.localeCompare(b.date) || String(a.shift).localeCompare(String(b.shift)));
-  table(ws2, 7, ["Date", "Shift", "Rig", "Block", "Metres", "Supervisor"], [...mrows.map(x => [fmt(x.date), x.shift || "", x.rig, x.block || "", num(x.metres), x.supervisor || ""]), ["Month to date", "", "", "", Math.round(c.month.metres * 10) / 10, ""]], true);
-  const ws3 = sheet("GET issued", [12, 9, 18, 14, 7, 12, 40], "GET Forecast – GET issued");
-  const irows = issues.filter(x => x.date >= c.monthStart && x.date <= c.upToCal).sort((a, b) => a.date.localeCompare(b.date));
-  table(ws3, 7, ["Date", "Shift", "Rig", "Item", "Qty", "Cost (R)", "Note"], [...irows.map(x => [fmt(x.date), x.shift || "", x.rig || "", (ITEMS.find(i => i[0] === x.item) || [])[2] || x.item, num(x.qty), num(x.qty) * (settings.price[x.item] || 0), [x.to && "to " + x.to, x.by && "by " + x.by, x.note].filter(Boolean).join(" · ")]), ["Month to date", "", "", "", "", Math.round(c.month.cost), ""]], true);
+  r = line(ws, r, ["Report date", D(upTo), "", "Month start", D(ms)], 0, { boldFirst: true }); r++;
+  r = head(ws, r, ["Metric", "Daily", "Month to date"]);
+  r = line(ws, r, ["Metres drilled", r1(dM), r1(mM)], 0, { fmt: { 1: DEC1, 2: DEC1 }, boldFirst: true });
+  r = line(ws, r, ["GET consumption cost (R)", Math.round(dCost), Math.round(mCost)], 1, { fmt: { 1: MONEY, 2: MONEY }, boldFirst: true });
+  r = line(ws, r, ["GET cost per metre (R/m)", dM ? dCost / dM : 0, mM ? mCost / mM : 0], 0, { fmt: { 1: MONEY2, 2: MONEY2 }, boldFirst: true }); r++;
+  r = heading(ws, r, "GET usage by item (month to date)");
+  r = head(ws, r, ["GET item", "MTD consumed qty", "Target life m/unit", "Expected MTD qty", "Expected cost (R)", "Stock on hand", "Excess qty (+)", "MTD cost (R)", "Variance (R)", "Comments"]);
+  let tExp = 0, tCost = 0;
+  ITEMS.forEach(([k], i) => { const q = mtdQty(k), exq = life(k) ? mM / life(k) : 0, exc = exq * price(k), cost = q * price(k); tExp += exc; tCost += cost;
+    r = line(ws, r, [NAME[k], q, life(k), Math.round(exq * 10) / 10, Math.round(exc), c.stock[k] ?? "", Math.round((q - exq) * 10) / 10, cost, Math.round(exc - cost), ""], i, { fmt: { 4: MONEY, 7: MONEY, 8: MONEY }, red: [6], boldFirst: true }); });
+  r = line(ws, r, [NAME.HAMMER, mtdQty("HAMMER"), "", "", "", c.stock.HAMMER ?? "", "", mtdQty("HAMMER") * price("HAMMER"), "", "Hammers are not in cost per metre"], 1, { fmt: { 7: MONEY }, boldFirst: true });
+  r = line(ws, r, ["Total: bit, rod and shank", "", "", "", Math.round(tExp), "", "", tCost, Math.round(tExp - tCost), ""], 0, { tot: true, fmt: { 4: MONEY, 7: MONEY, 8: MONEY } });
+  r = note(ws, r, "Expected qty = month-to-date metres ÷ target life. Positive excess = more used than expected. Negative variance = cost above what the metres allow.", 10); r++;
+  r = heading(ws, r, "Variance against standard (month to date)");
+  r = head(ws, r, ["GET item", "Standard price (R)", "Life (m/unit)", "Standard R/m", "Allowed MTD cost (R)", "Consumption variance (R)", "Price variance (R)", "Total variance (R)"]);
+  let tAll = 0, tVar = 0;
+  ITEMS.forEach(([k], i) => { const allowed = life(k) ? mM / life(k) * price(k) : 0, v = mtdQty(k) * price(k) - allowed; tAll += allowed; tVar += v;
+    r = line(ws, r, [NAME[k], price(k), life(k), life(k) ? price(k) / life(k) : 0, Math.round(allowed), Math.round(v), 0, Math.round(v)], i, { fmt: { 1: MONEY, 3: MONEY2, 4: MONEY, 5: MONEY, 6: MONEY, 7: MONEY }, red: [5, 7], boldFirst: true }); });
+  r = line(ws, r, ["Total: bit, rod and shank", "", "", c.std, Math.round(tAll), Math.round(tVar), 0, Math.round(tVar)], 0, { tot: true, fmt: { 3: MONEY2, 4: MONEY, 5: MONEY, 6: MONEY, 7: MONEY } });
+  r = note(ws, r, "Positive variance = higher cost than standard. Negative variance = saving. Price variance = quantity × (actual price − standard price).", 8);
+
+  // 2. Prices
+  ws = sheet("Prices", [14, 14, 26, 16, 18, 26, 20], "GET price register", "Unit prices and target lives used in every tab");
+  r = head(ws, 7, ["Price code", "GET item", "Specification / size", "Unit price (R)", "Target life (m/unit)", "Supplier / effective date", "Standard unit price (R)"]);
+  STOCK_ITEMS.forEach(([k, n, l], i) => { r = line(ws, r, [CODE(k), NAME[k], l, price(k) || "", k === "HAMMER" ? "" : life(k), "", price(k) || ""], i, { fmt: { 3: MONEY, 6: MONEY } }); });
+  freezeAt(ws, 7);
+
+  // 3. Consumption
+  ws = sheet("Consumption", [12, 9, 18, 12, 12, 16, 9, 13, 13, 9, 22, 40, 14], "Daily GET consumption");
+  r = head(ws, 7, ["Date", "Shift", "Drill", "Block", "Price code", "Reason", "Qty consumed", "Unit price (R)", "Cost (R)", "Item", "Notes", "Reference / serial", "Approved by"]);
+  const blockOf = x => metres.find(m => m.date === x.date && (!x.shift || m.shift === x.shift) && m.block)?.block || "";
+  iss.forEach((x, i) => { r = line(ws, r, [D(x.date), x.shift || "", x.rig || "", x.block || blockOf(x), CODE(x.item), "Issued from store", num(x.qty), price(x.item), num(x.qty) * price(x.item), NAME[x.item] || x.item, x.note || "",
+    [x.to && "to " + x.to, x.by && "by " + x.by].filter(Boolean).join(" · "), ""], i, { fmt: { 7: MONEY, 8: MONEY } }); });
+  r = line(ws, r, ["Total", "", "", "", "", "", iss.reduce((n, x) => n + num(x.qty), 0), "", iss.reduce((n, x) => n + num(x.qty) * price(x.item), 0), "", "", "", ""], 0, { tot: true, fmt: { 8: MONEY } });
+  freezeAt(ws, 7);
+
+  // 4. Production
+  ws = sheet("Production", [12, 10, 16, 14, 15, 30], "Daily drilling metres");
+  r = head(ws, 7, ["Date", "Shift", "Drill", "Block", "Metres drilled", "Supervisor"]);
+  const prod = metres.filter(inM).sort((a, b) => a.date.localeCompare(b.date) || String(a.shift).localeCompare(String(b.shift)) || String(a.rig).localeCompare(String(b.rig)));
+  prod.forEach((x, i) => { r = line(ws, r, [D(x.date), x.shift || "", x.rig, x.block || "", num(x.metres), x.supervisor || x.note || ""], i, { fmt: { 4: DEC1 } }); });
+  r = line(ws, r, ["Month to date", "", "", "", r1(mM), ""], 0, { tot: true, fmt: { 4: DEC1 } });
+  freezeAt(ws, 7);
+
+  // 5. Stock (daily reconciliation, worked out from counts, receipts and issues)
+  ws = sheet("Stock", [12, 13, 12, 11, 12, 12, 14, 14, 14, 12, 16, 14, 34], "Daily GET stock reconciliation");
+  r = head(ws, 7, ["Date", "Price code", "Opening store qty", "Receipts", "Issued to drills", "Returns to store", "Other out / write-off", "Expected closing", "Actual closing qty", "Variance qty", "Variance value (R)", "Checked by", "Action / explanation"]);
+  const days = []; for (let d = ms; d <= upTo; d = addDays(d, 1)) days.push(d);
+  let k2 = 0;
+  for (const d of days) for (const [k] of STOCK_ITEMS) {
+    const recv = cnts.filter(x => x.item === k && x.date === d).reduce((n, x) => n + num(x.received), 0);
+    const out = iss.filter(x => x.item === k && x.date === d).reduce((n, x) => n + num(x.qty), 0);
+    const cnt = cnts.filter(x => x.item === k && x.date === d && x.count !== "" && x.count != null).at(-1);
+    if (!cnt && !recv && !out) continue;
+    const prev = cnts.filter(x => x.item === k && x.date < d && x.count !== "" && x.count != null).sort((a, b) => a.date.localeCompare(b.date)).at(-1);
+    const open = prev ? num(prev.count) + cnts.filter(x => x.item === k && x.date > prev.date && x.date < d).reduce((n, x) => n + num(x.received), 0) - iss.filter(x => x.item === k && x.date > prev.date && x.date < d).reduce((n, x) => n + num(x.qty), 0) : "";
+    const exp = open === "" ? "" : open + recv - out, act = cnt ? num(cnt.count) : "", vq = act !== "" && exp !== "" ? act - exp : "";
+    r = line(ws, r, [D(d), CODE(k), open, recv, out, 0, 0, exp, act, vq, vq === "" ? "" : vq * price(k), cnt?.by || "", ""], k2++, { fmt: { 10: MONEY } });
+    if (typeof vq === "number" && vq < 0) [10, 11].forEach(col => ws.getRow(r - 1).getCell(col).font = F({ bold: true, color: { argb: X.RED } }));
+  }
+  freezeAt(ws, 7);
+
+  // 6. This week
+  const w = c.week, wk = `${short(c.weekStart)} – ${short(c.weekEnd)}`, lw = `${short(c.lastStart)} – ${short(c.lastEnd)}`;
+  ws = sheet("This week", [30, 17, 17, 19, 17, 14, 40], "This week – GET used and stock");
+  r = heading(ws, 7, "Dates");
+  r = line(ws, r, ["Report date", D(c.rd), ""], 0, { boldFirst: true });
+  r = line(ws, r, ["Actuals up to (yesterday)", D(upTo), ""], 1, { boldFirst: true });
+  r = line(ws, r, ["This week (Mon – Sun)", D(c.weekStart), wk], 0, { boldFirst: true });
+  r = line(ws, r, ["Last week (Mon – Sun)", D(c.lastStart), lw], 1, { boldFirst: true });
+  r = line(ws, r, ["Production captured up to", D(c.lastProd || upTo), c.lastProd && c.lastProd < upTo ? "Metres still to be added" : "Up to date"], 0, { boldFirst: true }); r++;
+  r = heading(ws, r, "1. GET used – last week against this week");
+  r = head(ws, r, ["Item", "Last week (actual)", "This week to date", "Rest of this week (forecast)", "This week total", "Difference", "Comments"]);
+  r = line(ws, r, ["Dates", lw, c.actualDays ? `${short(c.weekStart)} – ${short(upTo)}` : "–", c.projDays ? `${short(addDays(c.weekStart, c.actualDays))} – ${short(c.weekEnd)}` : "–", wk, "", ""], 1, { boldFirst: true });
+  ITEMS.forEach(([k, n], i) => { const q = w.qty[k], tot = q.toDate + q.rest; r = line(ws, r, [n + " used", q.last, q.toDate, q.rest, tot, tot - q.last, ""], i, { red: [5], boldFirst: true }); });
+  const wTot = w.cost.toDate + w.cost.rest, mTot = w.metres.toDate + w.metres.rest;
+  r = line(ws, r, ["GET cost (R)", Math.round(w.cost.last), Math.round(w.cost.toDate), Math.round(w.cost.rest), Math.round(wTot), Math.round(wTot - w.cost.last), `Rest of this week forecast at the average of the last ${settings.avgDays} days (${short(c.avgFrom)} – ${short(c.upTo)})`], 0, { fmt: { 1: MONEY, 2: MONEY, 3: MONEY, 4: MONEY, 5: MONEY }, red: [5], boldFirst: true });
+  r = line(ws, r, ["Metres drilled", r1(w.metres.last), r1(w.metres.toDate), r1(w.metres.rest), r1(mTot), r1(mTot - w.metres.last), ""], 1, { fmt: { 1: DEC1, 2: DEC1, 3: DEC1, 4: DEC1, 5: DEC1 }, boldFirst: true });
+  const rm = (cst, m) => m ? cst / m : 0;
+  r = line(ws, r, ["GET cost per metre (R/m)", rm(w.cost.last, w.metres.last), rm(w.cost.toDate, w.metres.toDate), rm(w.cost.rest, w.metres.rest), rm(wTot, mTot), rm(wTot, mTot) - rm(w.cost.last, w.metres.last), `Last week ${R2(rm(w.cost.last, w.metres.last))}/m against ${R2(c.std)}/m standard`], 0, { fmt: { 1: MONEY2, 2: MONEY2, 3: MONEY2, 4: MONEY2, 5: MONEY2 }, red: [5], boldFirst: true });
+  r = line(ws, r, ["Standard GET cost per metre (R/m)", c.std, "", "", "", "", ""], 1, { fmt: { 1: MONEY2 }, boldFirst: true }); r++;
+  r = heading(ws, r, "2. GET stock and order for the rest of this week");
+  r = head(ws, r, ["Item", "Stock on hand", "Stock count date", "Needed rest of this week", "Order now", "Order cost (R)", "Comments"]);
+  let oc = 0;
+  ITEMS.forEach(([k, n], i) => { const cost = c.orderNow[k] * price(k); oc += cost;
+    r = line(ws, r, [n, c.stock[k] ?? "", c.stockDate[k] ? D(c.stockDate[k]) : "", w.qty[k].rest, c.orderNow[k], cost, c.stock[k] === null ? "No stock count yet" : `${c.stock[k]} in store, need ${w.qty[k].rest} up to Sunday ${fmt(c.weekEnd).slice(0, 5)}`], i, { fmt: { 5: MONEY }, red: [4], boldFirst: true }); });
+  r = line(ws, r, ["Total", "", "", "", "", oc, ""], 0, { tot: true, fmt: { 5: MONEY } }); r++;
+  r = heading(ws, r, "3. Metres by machine (actual up to yesterday)");
+  r = head(ws, r, ["Machine", "Day shift (month)", "Night shift (month)", "Month to date", "This week to date", "Last week", "Comments"]);
+  const ms_ = (rig, sh, a, b) => metres.filter(x => x.rig === rig && x.date >= a && x.date <= b && (!sh || x.shift === sh)).reduce((n, x) => n + num(x.metres), 0);
+  const rigsAll = [...RIGS, ...(metres.some(x => x.rig === "Not allocated" && inM(x)) ? ["Not allocated"] : [])];
+  rigsAll.forEach((g, i) => { const other = ms_(g, null, ms, upTo) - ms_(g, "Day", ms, upTo) - ms_(g, "Night", ms, upTo);
+    r = line(ws, r, [g, r1(ms_(g, "Day", ms, upTo)), r1(ms_(g, "Night", ms, upTo)), r1(ms_(g, null, ms, upTo)), r1(c.actualDays ? ms_(g, null, c.weekStart, upTo) : 0), r1(ms_(g, null, c.lastStart, c.lastEnd)), other > 0.05 ? `${M1(other)} m not split by shift` : (g === "Not allocated" ? "Site total not split by rig" : "")], i, { fmt: { 1: DEC1, 2: DEC1, 3: DEC1, 4: DEC1, 5: DEC1 }, boldFirst: true }); });
+  r = line(ws, r, ["Total", "", "", r1(mM), r1(w.metres.toDate), r1(w.metres.last), ""], 0, { tot: true, fmt: { 3: DEC1, 4: DEC1, 5: DEC1 } }); r++;
+  const ex = explain(c); [...ex.out, ...ex.warn].forEach(t => { r = note(ws, r, t, 7); });
+
+  // 7. Next week
+  const nStart = addDays(c.weekStart, 7), nEnd = addDays(c.weekStart, 13);
+  ws = sheet("Next week", [24, 15, 16, 16, 18, 12, 14, 16, 40], "Next week – GET forecast and order");
+  r = heading(ws, 7, "Dates");
+  r = line(ws, r, ["Next week (Mon – Sun)", D(nStart), `${short(nStart)} – ${short(nEnd)}`], 0, { boldFirst: true });
+  r = line(ws, r, ["Production captured up to", D(c.lastProd || upTo), c.lastProd && c.lastProd < upTo ? "Metres still to be added" : "Up to date"], 1, { boldFirst: true }); r++;
+  r = heading(ws, r, "1. GET forecast and order for next week");
+  r = head(ws, r, ["Item", "Forecast need", "Extra (spare)", "Total needed", "Stock left after this week", "Order", "Unit price (R)", "Order cost (R)", "Comments"]);
+  let nc = 0;
+  ITEMS.forEach(([k, n], i) => { const x = c.next[k], cost = x.order * price(k); nc += cost;
+    r = line(ws, r, [n, x.need, x.spare, x.total, x.left, x.order, price(k), cost, `Forecast ${x.need} + ${x.spare} spare. ${x.left} left after this week, order ${x.order}`], i, { fmt: { 6: MONEY, 7: MONEY }, red: [5], boldFirst: true }); });
+  r = line(ws, r, ["Total", "", "", "", "", "", "", nc, ""], 0, { tot: true, fmt: { 7: MONEY } });
+  r = line(ws, r, ["Order both weeks", "", "", "", "", "", "", oc + nc, `This week ${R(oc)} + next week ${R(nc)}`], 0, { tot: true, fmt: { 7: MONEY } }); r++;
+  r = heading(ws, r, "2. This week against next week");
+  r = head(ws, r, ["Item", "This week total", "Next week (forecast)", "Difference", "Comments"]);
+  const nCost = ITEMS.reduce((n, [k]) => n + c.next[k].need * price(k), 0);
+  r = line(ws, r, ["Metres drilled", r1(mTot), r1(c.nextM), r1(c.nextM - mTot), `Same m/day as the last ${settings.avgDays} days (${short(c.avgFrom)} – ${short(c.upTo)})`], 0, { fmt: { 1: DEC1, 2: DEC1, 3: DEC1 }, boldFirst: true });
+  r = line(ws, r, ["GET cost (R), excluding spare", Math.round(wTot), Math.round(nCost), Math.round(nCost - wTot), ""], 1, { fmt: { 1: MONEY, 2: MONEY, 3: MONEY }, boldFirst: true }); r++;
+  r = heading(ws, r, "3. Daily plan next week");
+  const rigsOn = RIGS.filter(g => (c.avg[g] || 0) > 0);
+  r = head(ws, r, ["Date", "Day", ...rigsOn.map(g => g + " metres"), "Total metres"]);
+  for (let i = 0; i < 7; i++) { const d = addDays(nStart, i), vals = rigsOn.map(g => r1(c.avg[g])); r = line(ws, r, [D(d), dayName(d), ...vals, r1(vals.reduce((a, b) => a + b, 0))], i, { fmt: Object.fromEntries([...rigsOn.map((_, j) => [j + 2, DEC1]), [rigsOn.length + 2, DEC1]]) }); }
+  r = line(ws, r, ["Week total", "", ...rigsOn.map(g => r1(c.avg[g] * 7)), r1(c.nextM)], 0, { tot: true, fmt: Object.fromEntries([...rigsOn.map((_, j) => [j + 2, DEC1]), [rigsOn.length + 2, DEC1]]) }); r++;
+  r = note(ws, r, `Bits forecast need = ${settings.nextBits ?? "next week metres ÷ bit life"} (stores estimate). Rods and shanks = next week metres ÷ life per unit this month, rounded. Extra (spare) covers losses in the hole.`, 9);
+  r = note(ws, r, "Stock left after this week = stock on hand less what is still needed this week. Order = total needed less stock left. Red = items to order.", 9);
+
   const out = await wb.xlsx.writeBuffer();
-  const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), name = `TKR_GET_Forecast_${fmt(c.rd).replace(/\//g, "-")}.xlsx`;
+  const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), name = `TKR_GET_Tracker_${fmt(upTo).replace(/\//g, "-")}.xlsx`;
   const { deliver } = await import("../lib/deliver.js");
   deliver(blob, name, { doneLabel: "Done – clear this phone's copy", onDone: async () => { const fb = await import("../lib/firebase.js"); const { clearPhoneCopy } = await import("../lib/deliver.js"); await clearPhoneCopy(fb, [db], toast); } });
 }
