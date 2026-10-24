@@ -204,7 +204,7 @@ async function seedOctoberGet() {
     let n = 0;
     for (const [i, [date, shift, k, qty, machine, rigs, block, by, to]] of OCT_TRACKER.issues.entries()) {
       const x = it(k); await setDoc(doc(db, "stMoves", `trk-i-${date}-${i}`), { kind: "issue", store: "drill", cat: "GET", itemId: x.id, item: x.name, getKey: k, unit: x.unit || "ea", price: num(x.price),
-        qty, date, shift, machine, to, note: [rigs, block ? "block " + block : ""].filter(Boolean).join(" · "), byName: by || "GET tracker", byUid: user.uid, src: "tracker", createdAt: at(date, shift === "Night" ? 20 : 9, i) }); n++;
+        qty, date, shift, machine: machine || rigs.replace(/TDR (\d{3})/g, "TDR$1"), to, note: [rigs, block ? "block " + block : ""].filter(Boolean).join(" · "), byName: by || "GET tracker", byUid: user.uid, src: "tracker", createdAt: at(date, shift === "Night" ? 20 : 9, i) }); n++;
     }
     for (const [i, [date, k, qty, from, by]] of OCT_TRACKER.recs.entries()) {
       const x = it(k); await setDoc(doc(db, "stMoves", `trk-r-${date}-${i}`), { kind: "receive", store: "drill", cat: "GET", itemId: x.id, item: x.name, getKey: k, unit: x.unit || "ea", price: num(x.price),

@@ -46,7 +46,7 @@ const DEFAULTS = { price: { BIT: 9000, ROD: 8621, SHANK: 6200, HAMMER: 48000 }, 
 let user = null, email = "", managers = [], metres = [], issues = [], counts = [], settings = structuredClone(DEFAULTS);
 // GET issued and received at the Drill Stores (Stores section) come in by themselves, with the prices set there
 let stMoves = [], stCounts = [], stPrice = {};
-const rigName = m => /^TDR\d{3}$/.test(m || "") ? "TDR " + m.slice(3) : (m || "");
+const rigName = m => (m || "").replace(/TDR(\d{3})/g, "TDR $1");
 const fromStores = () => stMoves.filter(x => x.getKey && x.kind === "issue").map(x => { const n = x.note || "", rg = n.match(/TDR \d{3}( \/ TDR \d{3})*/), bl = n.match(/block ([^·]+)/);
   return { id: x.id, date: x.date, shift: x.shift || "", rig: rigName(x.machine) || (rg ? rg[0] : ""), block: bl ? bl[1].trim() : "", item: x.getKey, qty: num(x.qty), to: x.to || "", by: x.byName || "", note: rg || bl ? "" : n, src: "stores" }; });
 const allIssues = () => issues.concat(fromStores());
