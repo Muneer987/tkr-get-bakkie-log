@@ -3,7 +3,7 @@
    Data is shared online in Firebase (admins write, managers read). */
 import {
   initializeApp, getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail,
-  initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, addDoc, setDoc, deleteDoc, onSnapshot, query, where,
+  initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, addDoc, setDoc, deleteDoc, getDoc, onSnapshot, query, where,
 } from "../lib/firebase.js";
 
 const firebaseConfig = {
@@ -34,6 +34,7 @@ function toast(m) { const t = $("toast"); t.textContent = m; t.hidden = false; c
 function fail(e) { console.warn(e); toast(e?.code === "permission-denied" ? "Only an admin can change this." : "That didn't save. Try again."); }
 const loadLib = src => new Promise((res, rej) => { if (document.querySelector(`script[src="${src}"]`)?.dataset.ok) return res(); const s = document.createElement("script"); s.src = src; s.onload = () => { s.dataset.ok = 1; res(); }; s.onerror = rej; document.head.appendChild(s); });
 
+const MONTHS_FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const ITEMS = [["BIT", "Bits", "140 mm bits"], ["ROD", "Rods", "Rods"], ["SHANK", "Shanks", "Shanks"]];
 const STOCK_ITEMS = [...ITEMS, ["HAMMER", "Hammers", "Hammers"]];
 const ONE = { BIT: "bit", ROD: "rod", SHANK: "shank", HAMMER: "hammer" };
@@ -67,7 +68,7 @@ function gateOrApp() {
   $("gate").hidden = true; app.hidden = false; $("signBtn").hidden = false; $("who").textContent = email + (isAdmin() ? " · admin" : " · manager");
   if (subs.length === 1) {
     const live = (name, set) => subs.push(onSnapshot(collection(db, name), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => netNote("Couldn't load. Check the signal.")));
-    live("fcMetres", v => metres = v); live("fcIssues", v => issues = v); live("fcCounts", v => counts = v);
+    live("fcMetres", v => { metres = v; if (isAdmin()) setTimeout(seedOctober, 1500); }); live("fcIssues", v => issues = v); live("fcCounts", v => counts = v);
     const liveQ = (name, set) => subs.push(onSnapshot(query(collection(db, name), where("store", "==", "drill")), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => console.warn(e)));
     liveQ("stMoves", v => stMoves = v); liveQ("stCounts", v => stCounts = v);
     subs.push(onSnapshot(doc(db, "stConfig", "items"), s => { stPrice = {}; (s.exists() ? s.data().list || [] : []).forEach(i => { if (i.getKey && num(i.price) > 0) stPrice[i.getKey] = num(i.price); }); settings = mergeSettings(rawSettings); render(); }, () => {}));
@@ -139,6 +140,8 @@ function calc(rd) {
   const yest = upToCal;
   return { rd, upTo, upToCal, lastProd, weekStart, weekEnd, lastStart, lastEnd, monthStart, actualDays, projDays, avg, avgAll, avgFrom, lifeUsed, stock, stockDate, week, orderNow, nextM, next, std,
     day: { metres: mSum(yest, yest), cost: cost(yest, yest) }, month: { metres: monthM, cost: cost(monthStart, upToCal) },
+    monthRig: Object.fromEntries(RIGS.map(r => [r, mSum(monthStart, upToCal, r)])), monthNA: monthM - RIGS.reduce((n, r) => n + mSum(monthStart, upToCal, r), 0),
+    weekRig: Object.fromEntries(RIGS.map(r => [r, actualDays ? mSum(weekStart, upToCal, r) : 0])),
     recentIssues: issues.filter(x => inR(x, addDays(upToCal, -1), upToCal)) };
 }
 
@@ -192,6 +195,12 @@ function dash(c) {
   ${empty ? `<div class="notice"><b class="t">No data yet</b>${isAdmin() ? "Tap Import and choose your GET tracker file to bring in October so far, or add metres, GET issued and a stock count." : "Ask admin to import the GET tracker or add the metres."}</div>` : ""}
   <div class="notice"><b class="t">Why the forecast looks like this</b><ul>${ex.out.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>
   ${ex.warn.length ? `<div class="notice warn"><b class="t">Check</b><ul>${ex.warn.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
+  <section class="card"><h2>Metres to date · ${MONTHS_FULL[+c.monthStart.slice(5, 7) - 1]} ${c.monthStart.slice(0, 4)}</h2>
+    <div class="tiles" style="margin-bottom:0">
+      ${tile("All rigs combined", M1(c.month.metres) + " m", `1 to ${short(c.upToCal)} · this week ${M1(w.metres.toDate)} m`, "dark")}
+      ${RIGS.map(r => tile(r, M1(c.monthRig[r]) + " m", `this week ${M1(c.weekRig[r])} m · ${M1(c.avg[r] || 0)} m/day avg`)).join("")}
+      ${Math.abs(c.monthNA) >= 0.05 ? tile("Not allocated to a rig", M1(c.monthNA) + " m", "site total not split by rig") : ""}
+    </div></section>
   <div class="tiles">
     ${tile("Metres " + fmt(c.upToCal), M1(c.day.metres) + " m", "")}
     ${tile("Metres this week to date", M1(w.metres.toDate) + " m", "last week " + M1(w.metres.last) + " m")}
@@ -374,6 +383,42 @@ async function importFile(file) {
   } catch (x) { console.warn(x); msg.textContent = x?.code === "permission-denied" ? "Only an admin can import." : "The file couldn't be read. Save it again in Excel and try once more."; }
 }
 
+const normK = v => String(v ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+function summaryLines(data) {
+  const lines = []; let prevMtd = null, prevMonth = "";
+  for (const d of data) {
+    const rigSum = Object.values(d.rigs).reduce((a, b) => a + b, 0);
+    Object.entries(d.rigs).forEach(([rig, m]) => { if (m) lines.push({ date: d.date, rig, metres: r1(m) }); });
+    if (d.mtd !== null) { const mo = d.date.slice(0, 7); const site = mo !== prevMonth || prevMtd === null ? d.mtd : d.mtd - prevMtd; const diff = r1(site - rigSum);
+      if (Math.abs(diff) >= 0.05) lines.push({ date: d.date, rig: "Not allocated", metres: diff }); prevMtd = d.mtd; prevMonth = mo; }
+  }
+  return lines;
+}
+async function writeSummary(data, lines) {
+  const days = new Set(data.map(d => d.date));
+  for (const x of metres.filter(x => days.has(x.date))) await deleteDoc(doc(db, "fcMetres", x.id));
+  const now = Date.now(); let n = 0;
+  for (const x of lines) { await setDoc(doc(db, "fcMetres", `sum-${x.date}-${normK(x.rig)}`), { date: x.date, shift: "", rig: x.rig, block: "", metres: x.metres, supervisor: "", src: "summary", note: x.rig === "Not allocated" ? "Site total not split by rig" : "", createdAt: now + n }); n++; }
+  return n;
+}
+/* October 2026 metres (TKR October 2026 Drilling Metres Summary, 01/10 to 23/10): machine metres from the daily shift reports, month to date as per site totals.
+   Loaded into the app once, the first time an admin opens the GET Forecast with signal. */
+const OCT_2026 = [["01", 170.0, 70.0, 240.0], ["02", 170.0, 80.4, 483.0], ["03", 135.0, 207.1, 825.1], ["04", 166.9, 93.6, 1249.2], ["05", 142.5, 192.7, 1584.4], ["06", 180.1, 228.0, 1992.5],
+  ["07", 80.0, 10.8, 2083.3], ["08", 96.7, 65.3, 2245.3], ["09", 157.1, 126.6, 2529.0], ["10", 0.0, 144.0, 2673.0], ["11", 50.4, 137.4, 2860.8], ["12", 0.0, 49.5, 2910.3],
+  ["13", 69.5, 99.5, 3079.3], ["14", 164.4, 218.1, 3461.8], ["15", 147.1, 221.1, 3830.0], ["16", 33.7, 16.9, 3880.6], ["17", 0.0, 99.5, 4006.3], ["18", 132.1, 104.7, 4243.1],
+  ["19", 71.8, 24.9, 4426.5], ["20", 59.4, 76.2, 4562.1], ["21", 34.8, 83.7, 4680.6], ["22", 0.0, 208.3, 4888.9], ["23", 0.0, 32.6, 4921.5]]
+  .map(([d, a, b, mtd]) => ({ date: "2026-10-" + d, rigs: { "TDR 013": a, "TDR 015": b, "TDR 014": 0 }, mtd }));
+let seeding = false;
+async function seedOctober() {
+  if (seeding || !isAdmin() || !navigator.onLine) return; seeding = true;
+  try {
+    const flag = doc(db, "fcSettings", "seed-2026-10-metres"); const f = await getDoc(flag);
+    if (f.exists()) return;
+    const n = await writeSummary(OCT_2026, summaryLines(OCT_2026));
+    await setDoc(flag, { done: Date.now(), by: email, lines: n });
+    toast("October metres (1–23 Oct) loaded: 4 921.5 m month to date");
+  } catch (e) { console.warn(e); } finally { seeding = false; }
+}
 /* ---------- metres summary: Date | TDR 013 | TDR 015 | TDR 014 | (Month to date) ---------- */
 async function importMetres(file) {
   if (!file) return; const say = t => { metStatus = t; const el = $("metMsg"); if (el) el.textContent = t; }; say("Reading the file…");
@@ -390,19 +435,10 @@ async function importMetres(file) {
       if (v instanceof Date) return ymd(v); const m = String(v || "").match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/); return m ? `${m[3]}-${pad(+m[2])}-${pad(+m[1])}` : null; };
     const data = rows.slice(hi + 1).map(r => ({ date: dateOf(r[cDate]), rigs: Object.fromEntries(rigCols.map(([rig, i]) => [rig, num(r[i])])), mtd: cMtd >= 0 && r[cMtd] !== null && r[cMtd] !== "" ? num(r[cMtd]) : null })).filter(x => x.date).sort((a, b) => a.date.localeCompare(b.date));
     if (!data.length) { say("No dated rows were found under the header."); return; }
-    const lines = []; let prevMtd = null, prevMonth = "";
-    for (const d of data) {
-      const rigSum = Object.values(d.rigs).reduce((a, b) => a + b, 0);
-      Object.entries(d.rigs).forEach(([rig, m]) => { if (m) lines.push({ date: d.date, rig, metres: r1(m) }); });
-      if (d.mtd !== null) { const mo = d.date.slice(0, 7); const site = mo !== prevMonth || prevMtd === null ? d.mtd : d.mtd - prevMtd; const diff = r1(site - rigSum);
-        if (Math.abs(diff) >= 0.05) lines.push({ date: d.date, rig: "Not allocated", metres: diff }); prevMtd = d.mtd; prevMonth = mo; }
-    }
-    const days = new Set(data.map(d => d.date)), total = r1(lines.reduce((a, x) => a + x.metres, 0));
+    const lines = summaryLines(data);
+    const total = r1(lines.reduce((a, x) => a + x.metres, 0));
     if (!confirm(`Import ${data.length} days (${fmt(data[0].date)} to ${fmt(data.at(-1).date)}), ${M1(total)} m in total?\nThe app's metres for these days are replaced.`)) { say("Nothing changed."); return; }
-    say("Sending…");
-    for (const x of metres.filter(x => days.has(x.date))) await deleteDoc(doc(db, "fcMetres", x.id));
-    const now = Date.now(); let n = 0;
-    for (const x of lines) { await setDoc(doc(db, "fcMetres", `sum-${x.date}-${norm(x.rig)}`), { date: x.date, shift: "", rig: x.rig, block: "", metres: x.metres, supervisor: "", src: "summary", note: x.rig === "Not allocated" ? "Site total not split by rig" : "", createdAt: now + n }); n++; }
+    say("Sending…"); const n = await writeSummary(data, lines);
     say(`Imported ${n} metre lines for ${data.length} days from ${file.name}. Month to date in the file: ${data.at(-1).mtd !== null ? M1(data.at(-1).mtd) + " m" : "not given"}.`); toast("Metres imported");
   } catch (x) { console.warn(x); say(x?.code === "permission-denied" ? "Only an admin can import." : "The file couldn't be read. Save it again in Excel and try once more."); }
 }
