@@ -226,6 +226,39 @@ const REPORT_SEEDS = [
   { id: "seed-2026-10-21-drill", msg: "Drill Stores closing 21/10 loaded", m: [
     ["2026-10-21", "issue", "drill", "GET", "get-bit", "", "", 1, "TDR015", "Thomas", "Olebogeng", "Drill Stores closing 21/10"]],
     c: [["2026-10-21", "drill", "get-bit", 1, "Olebogeng"], ["2026-10-21", "drill", "get-rod", 3, "Olebogeng"], ["2026-10-21", "drill", "get-shank", 3, "Olebogeng"]] },
+  { id: "seed-2026-10-drill-spares", msg: "October Drill Stores spares loaded", m: [
+    ["2026-10-03", "issue", "drill", "Engine oil", "oil-eng", "", "", 2, "TDR013", "", "Muneer", "Site office 21:00"],
+    ["2026-10-08", "issue", "drill", "PPE", "ppe-helmet", "", "", 1, "", "Hannes", "Refilwe", ""],
+    ["2026-10-08", "issue", "drill", "Spares", "", "Pine gel 5 kg", "ea", 1, "ROMPAD STORE", "Refilwe", "Refilwe", "Moved to Rompad Stores"],
+    ["2026-10-08", "issue", "drill", "Spares", "", "Service kit TKRH011", "kit", 1, "ROMPAD STORE", "Refilwe", "Refilwe", "Moved to Rompad Stores"],
+    ["2026-10-08", "issue", "drill", "Spares", "", "Tissue", "ea", 2, "", "Valeka", "Refilwe", ""],
+    ["2026-10-08", "issue", "drill", "Spares", "", "Service kit TKRH015", "kit", 1, "ROMPAD STORE", "Refilwe", "Edwin", "Moved to Rompad Stores"],
+    ["2026-10-09", "issue", "drill", "PPE", "", "PPE top", "ea", 40, "", "Simon (drilling)", "Edwin", ""],
+    ["2026-10-09", "issue", "drill", "PPE", "", "PPE trouser", "ea", 36, "", "Simon (drilling)", "Edwin", ""],
+    ["2026-10-09", "issue", "drill", "PPE", "ppe-gloves", "", "", 1, "", "Titus", "Edwin", ""],
+    ["2026-10-09", "issue", "drill", "PPE", "ppe-gloves", "", "", 1, "", "Andries", "Edwin", ""],
+    ["2026-10-10", "issue", "drill", "PPE", "ppe-gloves", "", "", 2, "", "Martin", "Refilwe", ""],
+    ["2026-10-10", "issue", "drill", "PPE", "ppe-ear", "", "", 2, "", "Martin", "Refilwe", ""],
+    ["2026-10-10", "issue", "drill", "Spares", "", "Coogar gas", "ea", 1, "ROMPAD STORE", "", "Refilwe", "Moved to Rompad Stores"],
+    ["2026-10-10", "issue", "drill", "Spares", "", "Oxygen gas", "ea", 1, "ROMPAD STORE", "", "Refilwe", "Moved to Rompad Stores"],
+    ["2026-10-10", "issue", "drill", "Hydraulic oil", "oil-hyd", "", "", 1, "ROMPAD STORE", "", "Refilwe", "Moved to Rompad Stores"],
+    ["2026-10-10", "issue", "drill", "Engine oil", "oil-eng", "", "", 1, "TDR013", "", "Refilwe", ""],
+    ["2026-10-15", "receive", "drill", "Spares", "", "Hydraulic grease fitting (110 piece)", "ea", 1, "", "Khaya", "Phumzile", ""],
+    ["2026-10-15", "receive", "drill", "Spares", "", "Injector pump", "ea", 1, "", "Khaya", "Phumzile", ""],
+    ...[["250 hr service kit TDR015", "Spares", "kit", 1], ["500 hr service kit TDR013", "Spares", "kit", 1], ["Hydraulic Oil 68", "Hydraulic oil", "20L", 10, "oil-hyd"], ["Diesel engine oil 15W40", "Engine oil", "20L", 5, "oil-eng"],
+      ["Degreaser", "Spares", "ea", 2], ["Antifreeze", "Spares", "ea", 2], ["Compressor oil 46", "Rockdrill / compressor oil", "20L", 5, "oil-comp"], ["Lithium grease", "Grease", "ea", 1], ["Injector pump", "Spares", "ea", 1]]
+      .map(([n, cat, u, q, id]) => ["2026-10-16", "receive", "drill", cat, id || "", n, u, q, "", "Khaya", "Edwin", ""]),
+    ["2026-10-19", "receive", "drill", "Spares", "", "Tyre (TLDV012)", "ea", 4, "", "Tynash", "Edwin", ""],
+    ["2026-10-20", "issue", "drill", "Spares", "", "Tyre", "ea", 4, "TLDV012", "Sawara", "Olebogeng", "Drill Stores closing 20/10"],
+    ...[["M10 x 80 bolts, nuts & washers", 8], ["Hammer 1.8 kg (hand tool)", 1], ["M12 x 40 bolts, nuts & washers", 8], ["M14 x 40 bolts, nuts & washers", 8], ["Lock rubber", 1], ["Rod catcher", 4], ["Hydraulic return filter", 1],
+      ["Dust collector filter", 5], ["Pito clamp", 2], ["Stoppers", 4], ["M10 x 130 bolt & nuts", 4], ["M10 x 110 bolt & nuts", 4], ["Soft grippers", 4]]
+      .map(([n, q]) => ["2026-10-21", "receive", "drill", "Spares", "", n, "ea", q, "", "Sawara", "Olebogeng", "Drill Stores closing 21/10"]),
+    ["2026-10-21", "issue", "drill", "Engine oil", "oil-eng", "", "", 2, "ROMPAD STORE", "Jeff", "Olebogeng", "Moved to Rompad Stores"],
+    ["2026-10-21", "issue", "drill", "Spares", "", "Antifreeze", "ea", 1, "ROMPAD STORE", "Jeff", "Olebogeng", "Moved to Rompad Stores"],
+    ...[["Hammer 1.8 kg (hand tool)", 1], ["Stoppers", 2], ["Rod catcher", 1], ["M10 x 130 bolt & nuts", 4], ["M14 x 40 bolts, nuts & washers", 8], ["M12 x 40 bolts, nuts & washers", 8], ["Lock rubber", 1]]
+      .map(([n, q]) => ["2026-10-21", "issue", "drill", "Spares", "", n, "ea", q, "TDR013", "Sawara", "Olebogeng", "Drill Stores closing 21/10"]),
+    ["2026-10-24", "issue", "drill", "Spares", "", "Service kit TDR015", "kit", 1, "TDR015", "Tshepang Nyoni", "Phumzile", "Site office 24/10"],
+    ["2026-10-24", "issue", "drill", "Spares", "", "Service kit TDR013", "kit", 1, "TDR013", "Tshepang Nyoni", "Phumzile", "Site office 24/10"]], c: [] },
   { id: "seed-2026-10-22-24-rompad", msg: "Rompad reports 22–24/10 loaded", m: [
     ...[["Degreaser", "Spares", "ea", 2], ["Diesel engine oil 15W40", "Engine oil", "20L", 3, "oil-eng"], ["Compressor oil 68", "Rockdrill / compressor oil", "20L", 5], ["Antifreeze", "Spares", "ea", 1],
       ["Compressor oil 46", "Rockdrill / compressor oil", "20L", 2, "oil-comp"], ["Rockdrill oil 220", "Rockdrill / compressor oil", "20L", 2], ["Engine gearlube 80W-90", "Spares", "ea", 3],
@@ -305,12 +338,15 @@ function stockOf(st, it) {
   return { count: c ? num(c.count) : null, countDate: from, recv, iss, onHand: c ? num(c.count) + recv - iss : null, net: recv - iss };
 }
 function machineTotals(st, m) {
-  const rows = STORES[st].machines.map(mc => {
-    const l = issuesOf(st, m).filter(x => x.machine === mc);
+  // every machine in the store's list, plus any other machine items went to, plus a line for items not booked to a machine
+  const used = [...new Set(issuesOf(st, m).map(x => x.machine).filter(Boolean))].filter(x => !STORES[st].machines.includes(x)).sort();
+  const NA = "Not booked to a machine";
+  const rows = [...STORES[st].machines, ...used, NA].map(mc => {
+    const l = issuesOf(st, m).filter(x => mc === NA ? !x.machine : x.machine === mc);
     const o = {}; OILS.forEach(k => o[k] = l.filter(x => x.cat === k).reduce((n, x) => n + num(x.qty), 0));
-    return { mc, oils: o, spares: l.filter(x => !OILS.includes(x.cat) && x.cat !== "PPE").length, value: l.reduce((n, x) => n + val(x), 0), get: l.filter(x => x.cat === "GET").reduce((n, x) => n + val(x), 0) };
+    return { mc, oils: o, spares: l.filter(x => !OILS.includes(x.cat) && x.cat !== "PPE").length, value: l.reduce((n, x) => n + val(x), 0), get: l.filter(x => x.cat === "GET").reduce((n, x) => n + val(x), 0), lines: l.length };
   });
-  return rows;
+  return rows.filter(r => r.mc !== NA || r.lines);
 }
 
 /* ---------- rendering ---------- */
