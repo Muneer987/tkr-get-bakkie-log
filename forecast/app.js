@@ -163,7 +163,7 @@ function explain(c) {
   if (c.actualDays < 7) out.push(`The figures settle as the week is completed. From Monday ${nextMon} this week's figures will all be actual.`);
   if (c.lastProd && c.lastProd < c.upToCal) warn.push(`Metres are captured up to ${fmt(c.lastProd)}. ${fmt(addDays(c.lastProd, 1))} to ${fmt(c.upToCal)} still need to be added.`);
   if (c.actualDays === 7 && wtdRm > c.std * 1.5) warn.push(`The week is complete and cost per metre is ${R2(wtdRm)}/m, above the ${R2(c.std)}/m standard. This is not because the week is unfinished.`);
-  ITEMS.forEach(([k, n]) => { if (c.stock[k] === null) warn.push(`No stock count for ${n.toLowerCase()} yet. Add one under Stock.`); });
+  ITEMS.forEach(([k, n]) => { if (c.stock[k] === null) warn.push(`No ${n.toLowerCase()} in stock yet. Log what was received in Stores → Drill Stores.`); });
   return { out, warn };
 }
 
@@ -194,7 +194,7 @@ function dash(c) {
     <div class="row"><label>Report date <input type="date" id="rd" value="${c.rd}"></label>
       <button id="msgBtn">WhatsApp message</button><button class="primary" id="xlBtn">Export GET tracker (Excel)</button></div>
   </div>
-  ${empty ? `<div class="notice"><b class="t">No data yet</b>${isAdmin() ? "Tap Import and choose your GET tracker file to bring in October so far, or add metres, GET issued and a stock count." : "Ask admin to import the GET tracker or add the metres."}</div>` : ""}
+  ${empty ? `<div class="notice"><b class="t">No data yet</b>${isAdmin() ? "Tap Import and choose your GET tracker file to bring in October so far, or add the metres." : "Ask admin to import the GET tracker or add the metres."}</div>` : ""}
   <div class="notice"><b class="t">Why the forecast looks like this</b><ul>${ex.out.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>
   ${ex.warn.length ? `<div class="notice warn"><b class="t">Check</b><ul>${ex.warn.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
   <section class="card" style="background:#111;color:#f2efe8;border-color:#d4a12a">
@@ -284,9 +284,10 @@ function issuesView() {
     <section class="card"><h2>GET issued</h2>${listOf(list.map(x => ({ ...x, _c: x.src === "stores" ? "" : "fcIssues" })), x => `${x.src === "stores" ? '<span class="pill closed">Drill Stores</span> ' : '<span class="pill">Earlier import</span> '}${fmt(x.date)} ${esc(x.shift || "")} · <b>${esc(x.qty)} × ${esc((STOCK_ITEMS.find(i => i[0] === x.item) || [])[2] || x.item)}</b> · ${esc(x.rig || "")} ${x.to ? "· to " + esc(x.to) : ""} ${x.by ? "· by " + esc(x.by) : ""}`)}</section>`;
 }
 function stockView(c) {
-  return `<div class="info">GET stock comes from the Drill Stores by itself: the last stock count there, plus what was received, less what was issued. Counts and deliveries are logged in <a href="../stores/">Stores</a> → Drill Stores.</div>
-    <section class="card"><h2>GET stock now</h2><div class="tiles" style="margin-bottom:0">${STOCK_ITEMS.map(([k, n]) => tile(n, c.stock[k] ?? "–", c.stockDate[k] ? "counted " + fmt(c.stockDate[k]) + (c.stockDate[k] < c.upToCal ? ", moves since then included" : "") : "no stock count yet")).join("")}</div></section>
-    <section class="card"><h2>Counts and deliveries</h2>${listOf(allCounts().map(x => ({ ...x, _c: x.src === "stores" ? "" : "fcCounts" })), x => `${x.src === "stores" ? '<span class="pill closed">Drill Stores</span> ' : '<span class="pill">Earlier import</span> '}${fmt(x.date)} · <b>${esc((STOCK_ITEMS.find(i => i[0] === x.item) || [])[2] || x.item)}</b> ${x.count !== "" && x.count != null ? "· count " + esc(x.count) : ""} ${num(x.received) ? "· received " + esc(x.received) : ""} ${x.by ? "· " + esc(x.by) : ""}`)}</section>`;
+  const nm = k => (STOCK_ITEMS.find(i => i[0] === k) || [])[2] || k;
+  return `<div class="info">GET stock comes from the Drill Stores by itself: what was received, less what was issued. Issues and deliveries are logged in <a href="../stores/">Stores</a> → Drill Stores.</div>
+    <section class="card"><h2>GET stock now</h2><div class="tiles" style="margin-bottom:0">${STOCK_ITEMS.map(([k, n]) => tile(n, c.stock[k] ?? "–", "")).join("")}</div></section>
+    <section class="card"><h2>GET issued and received</h2>${listOf(stMoves.filter(x => x.getKey && (x.kind === "issue" || x.kind === "receive")), x => `${x.kind === "issue" ? '<span class="pill">Issued</span>' : '<span class="pill closed">Received</span>'} ${fmt(x.date)} · <b>${esc(nm(x.getKey))}</b> · ${esc(num(x.qty))}${x.machine ? " · " + esc(x.machine) : ""}${x.kind === "issue" ? (x.to ? " · to " + esc(x.to) : "") : (x.from ? " · from " + esc(x.from) : "")}${x.byName ? " · " + esc(x.byName) : ""}`)}</section>`;
 }
 function settingsView() {
   const f = (k, i) => `<input name="${k}.${i}" inputmode="decimal" value="${esc(settings[k][i])}">`;

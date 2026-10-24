@@ -343,7 +343,7 @@ function stockOf(st, it) {
   const from = c ? c.date : "";
   const after = kind => moves.filter(x => x.store === st && x.kind === kind && (x.itemId === it.id || (!x.itemId && x.item === it.name)) && (!c || x.date > from || (x.date === from && (x.createdAt || 0) > (c.createdAt || 0)))).reduce((n, x) => n + num(x.qty), 0);
   const recv = after("receive"), iss = after("issue");
-  return { count: c ? num(c.count) : null, countDate: from, recv, iss, onHand: c ? num(c.count) + recv - iss : null, net: recv - iss };
+  return { count: c ? num(c.count) : null, countDate: from, recv, iss, onHand: (c ? num(c.count) : 0) + recv - iss, net: recv - iss };
 }
 function machineTotals(st, m) {
   // every machine in the store's list, plus any other machine items went to, plus a line for items not booked to a machine
@@ -408,7 +408,7 @@ function syncForms() {
   });
   const dl = document.getElementById("names"); if (!dl) app.insertAdjacentHTML("beforeend", `<datalist id="names">${[...new Set(moves.map(x => x.to).filter(Boolean))].sort().map(n => `<option value="${esc(n)}">`).join("")}</datalist>`);
 }
-const stockText = it => { const s = stockOf(store, it); return s.onHand === null ? "no stock count yet" : `<b class="${s.onHand <= num(it.min) ? "low" : ""}">${nq(s.onHand)}</b> ${esc(it.unit || "")}`; };
+const stockText = it => { const s = stockOf(store, it); return `<b class="${s.onHand <= num(it.min) ? "low" : ""}">${nq(s.onHand)}</b> ${esc(it.unit || "")}`; };
 function lineHtml(x, canDel, dup) {
   const out = x.kind === "issue";
   return `<div class="line"><span class="pill ${out ? "out" : "in"}">${out ? "Issued" : "Received"}</span>
@@ -470,7 +470,7 @@ function ppeView() {
     <div class="row"><label>Store <select id="ppeStore">${opt("all", "Both stores", ppeStore === "all")}${opt("drill", "Drill Stores", ppeStore === "drill")}${opt("rompad", "Rompad Stores", ppeStore === "rompad")}</select></label>${monthPick()}<button class="primary" data-report="1">Download consumption report</button></div></div>
   <div class="tiles">${tile("Employees issued PPE", people.length, "this month", "dark")}${tile("Items issued", nq(iss.reduce((n, x) => n + num(x.qty), 0)), iss.length + (iss.length === 1 ? " line" : " lines"))}${tile("PPE value", value ? R(value) : "–", value ? "items with a price" : "add prices under Items & prices")}${tile("Low stock items", low.length, low.map(i => esc(i.name)).join(", ") || "none")}</div>
   <div class="ppe">${ppeItems.map(i => { const s = stockAll(i), q = qtyOf(i.name), mn = num(i.min); const pc = s === null ? 0 : Math.min(100, mn ? 100 * s / (mn * 3) : 100);
-    return `<div class="it"><div class="em" aria-hidden="true">${PPE_ICON[i.ppe] || PPE_ICON.other}</div><div style="flex:1;min-width:0"><b>${esc(i.name)}</b><span class="muted">${nq(q)} ${esc(i.unit || "")} issued · ${s === null ? "no stock count" : nq(s) + " in store"}</span>
+    return `<div class="it"><div class="em" aria-hidden="true">${PPE_ICON[i.ppe] || PPE_ICON.other}</div><div style="flex:1;min-width:0"><b>${esc(i.name)}</b><span class="muted">${nq(q)} ${esc(i.unit || "")} issued · ${nq(s || 0)} in store</span>
       ${s === null ? "" : `<div class="bar"><i class="${mn && s <= mn ? "low" : ""}" style="width:${pc}%"></i></div>`}</div></div>`; }).join("")}</div>
   <div class="pair"><section class="card"><h2>PPE issuance register</h2>${people.length ? `<div class="tbl"><table><thead><tr><th>Employee</th>${ppeItems.map(i => `<th class="r">${esc(i.name)}</th>`).join("")}</tr></thead><tbody>
     ${people.map(p => `<tr><td>${esc(p)}</td>${ppeItems.map(i => { const q = iss.filter(x => x.to?.trim() === p && x.item === i.name).reduce((n, x) => n + num(x.qty), 0); return `<td class="r">${q ? `<span class="chk">✓</span>${q > 1 ? " " + nq(q) : ""}` : '<span class="nochk">–</span>'}</td>`; }).join("")}</tr>`).join("")}
@@ -480,13 +480,12 @@ function ppeView() {
 function stockView() {
   const its = storeItems(store);
   return `<section class="card"><h2>Stock at ${STORES[store].name}</h2>
-    <p class="muted" style="margin-top:0">On hand = the last stock count + everything received − everything issued since that count. Count an item once to start it; after that the app keeps it up to date.${store === "drill" ? " GET stock and GET issued go to the GET Forecast by themselves." : ""}</p>
-    <div class="tbl"><table><thead><tr><th>Item</th><th>Category</th><th class="r">Last count</th><th>Count date</th><th class="r">Received since</th><th class="r">Issued since</th><th class="r">On hand</th><th class="r">Minimum</th>${canLog() ? "<th>New count</th>" : ""}</tr></thead><tbody>
-    ${its.map(i => { const s = stockOf(store, i); const low = s.onHand !== null && num(i.min) > 0 && s.onHand <= num(i.min);
-      return `<tr><td><b>${esc(i.name)}</b> <span class="muted">${esc(i.unit || "")}</span></td><td>${esc(i.cat)}</td><td class="num">${s.count === null ? "" : nq(s.count)}</td><td>${fmt(s.countDate)}</td><td class="num">${nq(s.recv) || ""}</td><td class="num">${nq(s.iss) || ""}</td>
-        <td class="num ${low ? "low" : ""}">${s.onHand === null ? '<span class="muted">count needed</span>' : nq(s.onHand)}</td><td class="num">${i.min ? nq(i.min) : ""}</td>
-        ${canLog() ? `<td><div class="row" style="flex-wrap:nowrap"><input data-countval="${esc(i.id)}" inputmode="decimal" style="width:80px" placeholder="Qty"><button data-count="${esc(i.id)}" style="min-height:40px">Save</button></div></td>` : ""}</tr>`; }).join("")}
-    </tbody></table></div><p class="muted">A new count is saved for today. Items typed as "Other item" are not in this list; admin adds them under Items & prices to track their stock.</p></section>`;
+    <p class="muted" style="margin-top:0">On hand = stock from the last closing report + received − issued since then.${store === "drill" ? " GET stock and GET issued go to the GET Forecast by themselves." : ""}</p>
+    <div class="tbl"><table><thead><tr><th>Item</th><th>Category</th><th class="r">Received since</th><th class="r">Issued since</th><th class="r">On hand</th><th class="r">Minimum</th></tr></thead><tbody>
+    ${its.map(i => { const s = stockOf(store, i); const low = num(i.min) > 0 && s.onHand <= num(i.min);
+      return `<tr><td><b>${esc(i.name)}</b> <span class="muted">${esc(i.unit || "")}</span></td><td>${esc(i.cat)}</td><td class="num">${nq(s.recv) || ""}</td><td class="num">${nq(s.iss) || ""}</td>
+        <td class="num ${low ? "low" : ""}">${nq(s.onHand)}</td><td class="num">${i.min ? nq(i.min) : ""}</td></tr>`; }).join("")}
+    </tbody></table></div><p class="muted">Items typed as "Other item" are not in this list; admin adds them under Items & prices to track their stock.</p></section>`;
 }
 function reportView() {
   return `<section class="card" style="max-width:640px"><h2>Consumption report</h2>
