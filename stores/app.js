@@ -279,9 +279,9 @@ const REPORT_SEEDS = [
     ["2026-10-24", "issue", "rompad", "PPE", "ppe-resp", "", "", 5, "", "", "Phumzile", "Rompad day shift 24/10 (dust masks)"],
     ["2026-10-24", "issue", "rompad", "PPE", "ppe-glasses", "", "", 4, "", "", "Phumzile", "Rompad day shift 24/10 (safety goggles)"],
     ["2026-10-24", "issue", "rompad", "Grease", "grease", "", "", 9, "", "", "Phumzile", "Rompad day shift 24/10"],
-    ["2026-10-24", "issue", "rompad", "Engine oil", "oil-eng", "", "", 1, "", "Simon", "Phumzile", "To Simon for TDR013"],
-    ["2026-10-24", "issue", "rompad", "Spares", "", "Antifreeze", "ea", 1, "", "Simon", "Phumzile", "To Simon for TDR013"],
-    ["2026-10-24", "issue", "rompad", "Spares", "", "Degreaser", "L", 5, "", "Simon", "Phumzile", "To Simon for TDR013"],
+    ["2026-10-24", "issue", "rompad", "Engine oil", "oil-eng", "", "", 1, "TDR013", "Simon", "Phumzile", "To Simon for TDR013"],
+    ["2026-10-24", "issue", "rompad", "Spares", "", "Antifreeze", "ea", 1, "TDR013", "Simon", "Phumzile", "To Simon for TDR013"],
+    ["2026-10-24", "issue", "rompad", "Spares", "", "Degreaser", "L", 5, "TDR013", "Simon", "Phumzile", "To Simon for TDR013"],
     ["2026-10-24", "issue", "rompad", "Hydraulic oil", "oil-hyd", "", "", 1, "", "", "Phumzile", "Rompad day shift 24/10"]],
     c: [["2026-10-24", "rompad", "oil-hyd", 0, "Phumzile"], ["2026-10-24", "rompad", "ppe-gloves", 0, "Phumzile"], ["2026-10-24", "rompad", "ppe-glasses", 1, "Phumzile"],
       ["2026-10-24", "rompad", "ppe-resp", 35, "Phumzile"], ["2026-10-24", "rompad", "oil-eng", 2, "Phumzile"], ["2026-10-24", "rompad", "oil-comp", 1, "Phumzile"], ["2026-10-24", "rompad", "moil-lock", 2, "Phumzile"]] },
@@ -304,6 +304,13 @@ async function seedReports() {
         await setDoc(doc(db, "stCounts", `${S.id}-c${i}`), { store: st, itemId, item: it?.name || itemId, getKey: it?.getKey || "", date, count, byName: by, byUid: user.uid, src: "report", createdAt: at(date, 23, i) }); n++;
       }
       await setDoc(flag, { done: Date.now(), by: email, lines: n }); toast(S.msg);
+    }
+    // 24/10: oil, antifreeze and degreaser to Simon were for TDR013; book them to that machine where they were loaded before
+    const fix = doc(db, "stConfig", "fix-2026-10-24-tdr013");
+    if (!(await getDoc(fix)).exists()) {
+      const S = REPORT_SEEDS.find(x => x.id === "seed-2026-10-22-24-rompad");
+      for (const [i, r] of S.m.entries()) if (r[11] === "To Simon for TDR013") await setDoc(doc(db, "stMoves", `${S.id}-m${i}`), { machine: "TDR013" }, { merge: true });
+      await setDoc(fix, { done: Date.now(), by: email });
     }
   } catch (e) { console.warn(e); } finally { seedingRep = false; }
 }
