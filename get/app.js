@@ -138,6 +138,29 @@ function clearable() {
   const keep = sorted(shifts)[0]?.id;
   return shifts.filter(s => lastExport.ids.includes(s.id) && s.id !== keep && s.closed);
 }
+/* closed shifts older than a few days can be cleared from the tablet without an export, once they are safely in Firebase */
+const OLD_DAYS = 3;
+function oldClearable() {
+  if (waiting()) return [];
+  const keep = sorted(shifts)[0]?.id, d = new Date(); d.setDate(d.getDate() - OLD_DAYS);
+  const cut = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return shifts.filter(s => s.closed && s.id !== keep && (s.date || "") < cut);
+}
+function oldCard() {
+  const list = oldClearable(); if (!list.length) return "";
+  return `<div class="info">${list.length} closed shift${list.length === 1 ? " is" : "s are"} older than ${OLD_DAYS} days and already sent to Firebase. You can clear ${list.length === 1 ? "it" : "them"} from this tablet; admin still has ${list.length === 1 ? "it" : "them"} for the export.
+    <div class="row" style="margin-top:10px"><button class="danger" id="clearOld">Clear old shifts</button></div></div>`;
+}
+async function clearOld() {
+  if (waiting()) { await syncNow?.(); }
+  if (waiting()) { alert("Some shifts are still sending, so nothing is cleared yet. Try again when there is signal."); return; }
+  const list = oldClearable(); if (!list.length) { render(); return; }
+  const nPh = list.reduce((n, s) => n + allPhotos(s).length, 0);
+  if (!confirm(`Clear ${list.length} old shift${list.length === 1 ? "" : "s"}${nPh ? ` and ${nPh} photo${nPh === 1 ? "" : "s"}` : ""} from this tablet? They stay in Firebase.`)) return;
+  for (const s of list) { await store.del(s.id); await deletePhotos(allPhotos(s)); }
+  const gone = new Set(list.map(s => s.id)); shifts = shifts.filter(s => !gone.has(s.id));
+  render(); setStatus?.(`${list.length} old shift${list.length === 1 ? "" : "s"} cleared from this tablet`);
+}
 function clearCard() {
   if (!lastExport) return "";
   const list = clearable();
@@ -160,7 +183,7 @@ function render() {
       <label style="flex:1 1 150px">To <input type="date" id="fTo" value="${range.to}"></label>`;
   let body = "";
   if (view === "shifts") body = `<div class="row" style="margin-bottom:14px;align-items:flex-end">${dates}
-      <button class="primary" id="newShift" style="flex:1 1 220px">Start shift / shift change</button></div>` + shiftList(inRange());
+      <button class="primary" id="newShift" style="flex:1 1 220px">Start shift / shift change</button></div>` + oldCard() + shiftList(inRange());
   else if (view === "log") body = `<div class="row" style="margin-bottom:14px;align-items:flex-end">${dates}
       ${canExport() ? `<button class="primary" id="xlsx" style="flex:1 1 200px">Combined report – all GET operators (Excel, photos zipped)</button>` : ""}</div>` + syncLine() + exportGate() + clearCard() + logTable(inRange());
   else body = backupView();
@@ -646,6 +669,7 @@ app.addEventListener("click", async e => {
   if (t.dataset.tripdel) { tripsOf(current).splice(+t.dataset.tripdel, 1); await save("Trip removed"); render(); return; }
   if (t.id === "keepExported") { lastExport = null; render(); return; }
   if (t.id === "clearExported") { await clearTabletCopy(true); return; }
+  if (t.id === "clearOld") { await clearOld(); return; }
   if (t.id === "takePhoto") { photoTarget = null; $("#camera").click(); return; }
   if (t.dataset.addphoto) { photoTarget = t.dataset.addphoto; $("#camera").click(); return; }
   if (t.id === "backup") {
