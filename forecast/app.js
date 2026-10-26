@@ -70,7 +70,7 @@ function gateOrApp() {
   $("gate").hidden = true; app.hidden = false; $("signBtn").hidden = false; $("who").textContent = email + (isAdmin() ? " · admin" : " · manager");
   if (subs.length === 1) {
     const live = (name, set) => subs.push(onSnapshot(collection(db, name), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => netNote("Couldn't load. Check the signal.")));
-    live("fcMetres", v => { metres = v; if (isAdmin()) setTimeout(async () => { await seedOctober(); await seedLate(); }, 1500); }); live("fcIssues", v => issues = v); live("fcCounts", v => counts = v);
+    live("fcMetres", v => { metres = v; if (isAdmin()) setTimeout(async () => { await seedOctober(); await seedLate(); await seedSite5200(); }, 1500); }); live("fcIssues", v => issues = v); live("fcCounts", v => counts = v);
     const liveQ = (name, set) => subs.push(onSnapshot(query(collection(db, name), where("store", "==", "drill")), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => console.warn(e)));
     liveQ("stMoves", v => stMoves = v); liveQ("stCounts", v => stCounts = v);
     subs.push(onSnapshot(doc(db, "stConfig", "items"), s => { stPrice = {}; (s.exists() ? s.data().list || [] : []).forEach(i => { if (i.getKey && num(i.price) > 0) stPrice[i.getKey] = num(i.price); }); settings = mergeSettings(rawSettings); render(); }, () => {}));
@@ -427,6 +427,18 @@ const LATE_2026_10 = [["2026-10-24", "Day", "", "", "No drilling on Saturday"],
   ["2026-10-24", "Night", "0423", "Katlego", "TDR013 drifter out for service · TDR015 no drill bit · TDR014 waiting for engine"],
   ["2026-10-25", "Night", "0423 / 0424", "Katlego", "TDR013 drifter out for service · TDR015 no drill bit fit to use · TDR014 waiting for engine"]];
 let seedingLate = false;
+/* Site month to date to 25/10 is 5 200 m (as given by Muneer); the 278.5 m above the rig figures is not split by rig or day, so it is booked on 25/10 as unassigned. */
+let seedingSite = false;
+async function seedSite5200() {
+  if (seedingSite || !isAdmin() || !navigator.onLine) return; seedingSite = true;
+  try {
+  if (!(await getDoc(doc(db, "fcSettings", "seed-2026-10-24-25-metres"))).exists()) return;
+  const flag = doc(db, "fcSettings", "adj-2026-10-25-5200"); if ((await getDoc(flag)).exists()) return;
+  await setDoc(doc(db, "fcMetres", "adj-2026-10-25-NA"), { date: "2026-10-25", shift: "", rig: "Not allocated", block: "", metres: 278.5, supervisor: "", src: "summary", note: "Site total 5 200 m up to 25/10, not split by rig", createdAt: Date.now() });
+  await setDoc(flag, { done: Date.now(), by: email });
+  toast("Month to date set to 5 200 m (278.5 m unassigned on 25/10)");
+  } catch (e) { console.warn(e); } finally { seedingSite = false; }
+}
 async function seedLate() {
   if (seedingLate || !isAdmin() || !navigator.onLine) return; seedingLate = true;
   try {
@@ -562,11 +574,13 @@ async function exportExcel(c) {
   freezeAt(ws, 7);
 
   // 4. Production
-  ws = sheet("Production", [12, 10, 16, 14, 15, 30], "Daily drilling metres");
-  r = head(ws, 7, ["Date", "Shift", "Drill", "Block", "Metres drilled", "Supervisor"]);
+  ws = sheet("Production", [12, 10, 16, 14, 15, 30, 18], "Daily drilling metres");
+  r = head(ws, 7, ["Date", "Shift", "Drill", "Block", "Metres drilled", "Supervisor", "Unassigned metres (not split by rig)"]);
   const prod = metres.filter(inM).sort((a, b) => a.date.localeCompare(b.date) || String(a.shift).localeCompare(String(b.shift)) || String(a.rig).localeCompare(String(b.rig)));
-  prod.forEach((x, i) => { r = line(ws, r, [D(x.date), x.shift || "", x.rig, x.block || "", num(x.metres), x.supervisor || x.note || ""], i, { fmt: { 4: DEC1 } }); });
-  r = line(ws, r, ["Month to date", "", "", "", r1(mM), ""], 0, { tot: true, fmt: { 4: DEC1 } });
+  const isNA = x => x.rig === "Not allocated";
+  prod.forEach((x, i) => { r = line(ws, r, [D(x.date), x.shift || "", isNA(x) ? "Unassigned" : x.rig, x.block || "", isNA(x) ? "" : num(x.metres), x.supervisor || x.note || "", isNA(x) ? num(x.metres) : ""], i, { fmt: { 4: DEC1, 6: DEC1 } }); });
+  const naM = prod.filter(isNA).reduce((n, x) => n + num(x.metres), 0);
+  r = line(ws, r, ["Month to date", "", "", "", r1(mM - naM), `All rigs and unassigned: ${M1(mM)} m`, r1(naM)], 0, { tot: true, fmt: { 4: DEC1, 6: DEC1 } });
   freezeAt(ws, 7);
 
   // 5. Stock (daily reconciliation, worked out from counts, receipts and issues)
@@ -617,7 +631,7 @@ async function exportExcel(c) {
   const ms_ = (rig, sh, a, b) => metres.filter(x => x.rig === rig && x.date >= a && x.date <= b && (!sh || x.shift === sh)).reduce((n, x) => n + num(x.metres), 0);
   const rigsAll = [...RIGS, ...(metres.some(x => x.rig === "Not allocated" && inM(x)) ? ["Not allocated"] : [])];
   rigsAll.forEach((g, i) => { const other = ms_(g, null, ms, upTo) - ms_(g, "Day", ms, upTo) - ms_(g, "Night", ms, upTo);
-    r = line(ws, r, [g, r1(ms_(g, "Day", ms, upTo)), r1(ms_(g, "Night", ms, upTo)), r1(ms_(g, null, ms, upTo)), r1(c.actualDays ? ms_(g, null, c.weekStart, upTo) : 0), r1(ms_(g, null, c.lastStart, c.lastEnd)), other > 0.05 ? `${M1(other)} m not split by shift` : (g === "Not allocated" ? "Site total not split by rig" : "")], i, { fmt: { 1: DEC1, 2: DEC1, 3: DEC1, 4: DEC1, 5: DEC1 }, boldFirst: true }); });
+    r = line(ws, r, [g === "Not allocated" ? "Unassigned" : g, r1(ms_(g, "Day", ms, upTo)), r1(ms_(g, "Night", ms, upTo)), r1(ms_(g, null, ms, upTo)), r1(c.actualDays ? ms_(g, null, c.weekStart, upTo) : 0), r1(ms_(g, null, c.lastStart, c.lastEnd)), other > 0.05 ? `${M1(other)} m not split by shift` : (g === "Not allocated" ? "Site total not split by rig" : "")], i, { fmt: { 1: DEC1, 2: DEC1, 3: DEC1, 4: DEC1, 5: DEC1 }, boldFirst: true }); });
   r = line(ws, r, ["Total", "", "", r1(mM), r1(w.metres.toDate), r1(w.metres.last), ""], 0, { tot: true, fmt: { 3: DEC1, 4: DEC1, 5: DEC1 } }); r++;
   const ex = explain(c); [...ex.out, ...ex.warn].forEach(t => { r = note(ws, r, t, 7); });
 
