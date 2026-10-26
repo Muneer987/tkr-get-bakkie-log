@@ -70,7 +70,7 @@ function gateOrApp() {
   $("gate").hidden = true; app.hidden = false; $("signBtn").hidden = false; $("who").textContent = email + (isAdmin() ? " · admin" : " · manager");
   if (subs.length === 1) {
     const live = (name, set) => subs.push(onSnapshot(collection(db, name), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => netNote("Couldn't load. Check the signal.")));
-    live("fcMetres", v => { metres = v; if (isAdmin()) setTimeout(seedOctober, 1500); }); live("fcIssues", v => issues = v); live("fcCounts", v => counts = v);
+    live("fcMetres", v => { metres = v; if (isAdmin()) setTimeout(async () => { await seedOctober(); await seedLate(); }, 1500); }); live("fcIssues", v => issues = v); live("fcCounts", v => counts = v);
     const liveQ = (name, set) => subs.push(onSnapshot(query(collection(db, name), where("store", "==", "drill")), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => console.warn(e)));
     liveQ("stMoves", v => stMoves = v); liveQ("stCounts", v => stCounts = v);
     subs.push(onSnapshot(doc(db, "stConfig", "items"), s => { stPrice = {}; (s.exists() ? s.data().list || [] : []).forEach(i => { if (i.getKey && num(i.price) > 0) stPrice[i.getKey] = num(i.price); }); settings = mergeSettings(rawSettings); render(); }, () => {}));
@@ -190,7 +190,7 @@ function dash(c) {
   const empty = !metres.length && !allIssues().length;
   return `
   <div class="strip">
-    <div><h2>${esc(dayName(c.rd))} ${fmt(c.rd)}</h2><div class="muted">This week ${short(c.weekStart)} – ${short(c.weekEnd)} · actuals up to ${fmt(c.upToCal)}</div></div>
+    <div><h2>${esc(dayName(c.rd))} ${fmt(c.rd)}</h2><div class="muted">This week ${short(c.weekStart)} – ${short(c.weekEnd)} · actuals up to ${fmt(c.upToCal)}</div>${lastUpdate()}</div>
     <div class="row"><label>Report date <input type="date" id="rd" value="${c.rd}"></label>
       <button id="msgBtn">WhatsApp message</button><button class="primary" id="xlBtn">Export GET tracker (Excel)</button></div>
   </div>
@@ -259,6 +259,15 @@ function metresChart(c) {
     if (days[i] === c.weekStart) g += `<line x1="${x - gap / 2}" x2="${x - gap / 2}" y1="${top}" y2="${H - bot}" stroke="var(--gold)" stroke-dasharray="3 3"/>`;
   });
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Metres per day per rig">${g}</svg><div class="legend">${RIGS.map(r => `<span><i style="background:${col[r]}"></i>${r}</span>`).join("")}<span>dashed line = start of this week</span></div>`;
+}
+function lastUpdate() {
+  const sk = x => (x.date || "") + (x.shift === "Night" ? "2" : "1");
+  const lm = metres.slice().sort((a, b) => sk(b).localeCompare(sk(a)))[0];
+  const ls = stMoves.filter(x => x.getKey).map(x => x.date).sort().at(-1);
+  const t = Math.max(0, ...metres.map(x => x.createdAt || 0), ...stMoves.map(x => x.createdAt || 0), ...issues.map(x => x.createdAt || 0));
+  if (!lm && !ls) return "";
+  const when = t ? (d => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()} at ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`)(new Date(t)) : "";
+  return `<div class="muted" style="margin-top:2px"><b>Last update:</b> metres up to ${lm ? fmt(lm.date) + (lm.shift ? " " + esc(lm.shift.toLowerCase()) + " shift" : "") : "–"} · GET from Drill Stores up to ${ls ? fmt(ls) : "–"}${when ? " · last saved " + esc(when) : ""}</div>`;
 }
 function listOf(arr, line) {
   const rows = arr.slice().sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 40);
@@ -411,6 +420,24 @@ async function seedOctober() {
     await setDoc(flag, { done: Date.now(), by: email, lines: n });
     toast("October metres (1–23 Oct) loaded: 4 921.5 m month to date");
   } catch (e) { console.warn(e); } finally { seeding = false; }
+}
+/* 24/10 and 25/10 shift reports (Soosans drilling group): no drilling on Saturday 24/10 day shift; night shifts 24/10 and 25/10 drilled 0 m
+   (TDR013 drifter out for service, TDR015 no drill bit fit to use, TDR014 waiting for an engine). Loaded once, like the October metres. */
+const LATE_2026_10 = [["2026-10-24", "Day", "", "", "No drilling on Saturday"],
+  ["2026-10-24", "Night", "0423", "Katlego", "TDR013 drifter out for service · TDR015 no drill bit · TDR014 waiting for engine"],
+  ["2026-10-25", "Night", "0423 / 0424", "Katlego", "TDR013 drifter out for service · TDR015 no drill bit fit to use · TDR014 waiting for engine"]];
+let seedingLate = false;
+async function seedLate() {
+  if (seedingLate || !isAdmin() || !navigator.onLine) return; seedingLate = true;
+  try {
+    const flag = doc(db, "fcSettings", "seed-2026-10-24-25-metres"); if ((await getDoc(flag)).exists()) return;
+    if (!(await getDoc(doc(db, "fcSettings", "seed-2026-10-metres"))).exists()) return;
+    const now = Date.now(); let n = 0;
+    for (const [date, shift, block, sup, note] of LATE_2026_10) for (const rig of ["TDR 013", "TDR 015"]) {
+      await setDoc(doc(db, "fcMetres", `rep-${date}-${shift}-${normK(rig)}`), { date, shift, rig, block, metres: 0, supervisor: sup, src: "report", note, createdAt: now + n }); n++; }
+    await setDoc(flag, { done: now, by: email, lines: n });
+    toast("Shift reports 24/10 and 25/10 loaded: 0 m");
+  } catch (e) { console.warn(e); } finally { seedingLate = false; }
 }
 /* ---------- metres summary: Date | TDR 013 | TDR 015 | TDR 014 | (Month to date) ---------- */
 async function importMetres(file) {

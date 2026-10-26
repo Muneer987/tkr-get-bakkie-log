@@ -447,7 +447,7 @@ function dashView() {
   const top = Object.values(byItem).sort((a, b) => b.value - a.value || b.qty - a.qty).slice(0, 10);
   const days = []; const d0 = parse(month + "-01"); const dn = new Date(d0.getFullYear(), d0.getMonth() + 1, 0).getDate();
   for (let i = 1; i <= dn; i++) { const ds = month + "-" + pad(i); days.push({ ds, lines: iss.filter(x => x.date === ds).length, value: iss.filter(x => x.date === ds).reduce((n, x) => n + val(x), 0) }); }
-  return `<div class="strip"><div><h2>${STORES[store].name} · ${monthName(month)}</h2><div class="muted">${STORES[store].sub}</div></div><div class="row">${monthPick()}<button class="primary" data-report="1">Download consumption report</button></div></div>
+  return `<div class="strip"><div><h2>${STORES[store].name} · ${monthName(month)}</h2><div class="muted">${STORES[store].sub}</div>${lastLogged()}</div><div class="row">${monthPick()}<button class="primary" data-report="1">Download consumption report</button></div></div>
   ${store === "drill" && fcMetres ? (() => { const end = month === today().slice(0, 7) ? today() : month + "-31";
       const mm = fcMetres.filter(x => (x.date || "").slice(0, 7) === month && x.date < end).reduce((n, x) => n + num(x.metres), 0);
       const lastM = fcMetres.filter(x => (x.date || "").slice(0, 7) === month).reduce((d, x) => x.date > d ? x.date : d, "");
@@ -486,6 +486,12 @@ function ppeView() {
     ${people.map(p => `<tr><td>${esc(p)}</td>${ppeItems.map(i => { const q = iss.filter(x => x.to?.trim() === p && x.item === i.name).reduce((n, x) => n + num(x.qty), 0); return `<td class="r">${q ? `<span class="chk">✓</span>${q > 1 ? " " + nq(q) : ""}` : '<span class="nochk">–</span>'}</td>`; }).join("")}</tr>`).join("")}
     </tbody></table></div>` : '<div class="muted">No PPE issued to a named person this month. Type the name in "Issued to" when PPE goes out.</div>'}</section>
   <section class="card"><h2>Stock alerts</h2>${low.length ? low.map(i => `<div class="line"><span class="pill out">Low stock</span><div><b>${esc(i.name)}</b><div class="meta">${nq(stockAll(i))} ${esc(i.unit || "")} left · minimum ${nq(i.min)}</div></div><span></span></div>`).join("") : '<div class="muted">No PPE below its minimum. Admin sets the minimum per item under Items & prices.</div>'}</section></div>`;
+}
+function lastLogged() {
+  const l = moves.filter(x => x.store === store).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0]; if (!l) return "";
+  const lastDay = moves.filter(x => x.store === store).map(x => x.date).sort().at(-1);
+  const when = l.createdAt ? (d => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()} at ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`)(new Date(l.createdAt)) : "";
+  return `<div class="muted" style="margin-top:2px"><b>Last update:</b> lines up to ${fmt(lastDay)}${when ? " · last saved " + esc(when) + (l.byName ? " by " + esc(l.byName) : "") : ""}</div>`;
 }
 function stockView() {
   const its = storeItems(store);
