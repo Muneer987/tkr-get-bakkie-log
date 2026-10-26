@@ -382,13 +382,15 @@ function moveForm(kind) {
     <form id="f-${kind}" class="grid" autocomplete="off" data-kind="${kind}">
       <label>Date <input type="date" id="${P}Date" value="${today()}" max="${today()}"></label>
       ${isOut ? `<label>Shift <select id="${P}Shift">${opt("Day", "Day")}${opt("Night", "Night")}</select></label>` : ""}
-      <label style="grid-column:1/-1">Category <select id="${P}Cat" data-fresh="1">${cats.map(c => opt(c, c === "GET" ? "GET (bits, rods, shanks, hammers)" : c, c === cat)).join("")}</select></label>
+      <label style="grid-column:1/-1">Category <select id="${P}Cat" data-fresh="1">${cats.map(c => opt(c, c === "GET" ? "GET (bits, rods, shanks, hammers)" : c, c === cat)).join("")}${opt("Anything", "Anything – type any item", cat === "Anything")}</select></label>
       <div style="grid-column:1/-1">${getTiles}</div>
       <label style="grid-column:1/-1" ${cat === "GET" ? "hidden" : ""}>Item <select id="${P}Item" data-fresh="1">${its.map(i => opt(i.id, i.name + (i.unit ? " (" + i.unit + ")" : ""), f.itemId === i.id)).join("")}${opt("__other", "Other item – type it", f.itemId === "__other" || (!its.length && cat !== "GET"))}</select></label>
       <label style="grid-column:1/-1" id="${P}OtherWrap" hidden>Item name <input id="${P}Other" placeholder="For example M16 bolt"></label>
       <label id="${P}UnitWrap" hidden>Unit <input id="${P}Unit" placeholder="ea, 20L, kg, pr"></label>
+      <label id="${P}PriceEachWrap" hidden>Price each in R (optional) <input id="${P}PriceEach" inputmode="decimal" placeholder="Leave empty if not known"></label>
       <label>Qty <input id="${P}Qty" inputmode="decimal" value="1"></label>
-      ${isOut ? `<label>Machine <select id="${P}Mach">${opt("", "Store / no machine")}${STORES[store].machines.map(m => opt(m, m)).join("")}</select></label>
+      ${isOut ? `<label>Machine <select id="${P}Mach">${opt("", "Store / no machine")}${STORES[store].machines.map(m => opt(m, m)).join("")}${opt("__other", "Other machine – type it")}</select></label>
+        <label id="${P}MachOtherWrap" hidden>Machine name <input id="${P}MachOther" placeholder="For example TLDV012"></label>
         <label>Issued to <input id="${P}To" list="names" placeholder="Name of the person"></label>`
       : `<label>Received from <input id="${P}From" placeholder="Supplier or main store"></label><label>Delivery note / GRN no. <input id="${P}Ref"></label>`}
       <label style="grid-column:1/-1">Note (optional) <input id="${P}Note"></label>
@@ -402,7 +404,8 @@ function syncForms() {
     const P = kind === "out" ? "o" : "i", sel = $(P + "Item"); if (!$(P + "Cat")) return;
     const cat = $(P + "Cat").value, f = form[kind];
     const id = cat === "GET" ? f.itemId : sel.value, it = itemOf(id), other = id === "__other" || (!it && cat !== "GET");
-    $(P + "OtherWrap").hidden = !other; $(P + "UnitWrap").hidden = !other;
+    $(P + "OtherWrap").hidden = !other; $(P + "UnitWrap").hidden = !other; $(P + "PriceEachWrap").hidden = !other;
+    if ($(P + "Mach")) $(P + "MachOtherWrap").hidden = $(P + "Mach").value !== "__other";
     const q = num($(P + "Qty").value);
     $(P + "Price").innerHTML = it ? `${esc(it.name)} · ${it.price ? R(it.price) + " per " + esc(it.unit || "unit") + (q ? " · value <b>" + R(it.price * q) + "</b>" : "") : "no price set (admin adds it under Items & prices)"}${kind === "out" && !other ? " · in store: " + stockText(it) : ""}` : (cat === "GET" ? "Tap Bits, Rods, Shanks or Hammers." : "");
   });
@@ -546,6 +549,7 @@ app.addEventListener("change", e => {
   if (t.id === "month") { month = t.value || month; render(); return; }
   if (t.id === "ppeStore") { ppeStore = t.value; render(); return; }
   if (t.id === "oCat" || t.id === "iCat") { const k = t.id === "oCat" ? "out" : "in"; form[k] = { cat: t.value }; render(); return; }
+  if (t.id === "oMach") { syncForms(); return; }
   if (t.id === "oItem" || t.id === "iItem") { form[t.id === "oItem" ? "out" : "in"].itemId = t.value; syncForms(); return; }
   if (t.dataset.status !== undefined) { setDoc(doc(db, "stConfig", "status"), { machines: { [t.dataset.status]: t.value.trim() } }, { merge: true }).then(() => toast("Status saved")).catch(fail); return; }
   if (tab === "items" && t.dataset.f) readItemRows();
@@ -554,14 +558,17 @@ app.addEventListener("input", e => { if (e.target.id === "oQty" || e.target.id =
 app.addEventListener("submit", async e => {
   e.preventDefault(); const kind = e.target.dataset.kind; if (!kind) return;
   const P = kind === "out" ? "o" : "i", err = t => { $(P + "Err").textContent = t; };
-  const cat = $(P + "Cat").value, id = cat === "GET" ? form[kind].itemId : $(P + "Item").value, it = itemOf(id);
+  const cat = $(P + "Cat").value;
+  const id = cat === "GET" ? form[kind].itemId : $(P + "Item").value, it = itemOf(id);
   const other = !it, name = other ? $(P + "Other").value.trim() : it.name;
   if (cat === "GET" && !it) { err("Tap Bits, Rods, Shanks or Hammers."); return; }
   if (!name) { err("Type the item name."); return; }
   const qty = num($(P + "Qty").value); if (!(qty > 0)) { err("Type how many, for example 1."); return; }
-  const rec = { kind: kind === "out" ? "issue" : "receive", store, cat, itemId: it?.id || "", item: name, getKey: it?.getKey || "", unit: other ? $(P + "Unit").value.trim() : (it.unit || ""), price: it?.price ? num(it.price) : 0,
+  const rec = { kind: kind === "out" ? "issue" : "receive", store, cat, itemId: it?.id || "", item: name, getKey: it?.getKey || "", unit: other ? $(P + "Unit").value.trim() : (it.unit || ""), price: it?.price ? num(it.price) : (it ? 0 : num($(P + "PriceEach").value) || 0),
     qty, date: $(P + "Date").value || today(), note: $(P + "Note").value.trim(), byName: myName(), byUid: user.uid, createdAt: Date.now() };
-  if (kind === "out") Object.assign(rec, { shift: $("oShift").value, machine: $("oMach").value, to: $("oTo").value.trim() });
+  if (kind === "out") { const mach = $("oMach").value === "__other" ? $("oMachOther").value.trim().toUpperCase() : $("oMach").value;
+    if ($("oMach").value === "__other" && !mach) { err("Type the machine name."); return; }
+    Object.assign(rec, { shift: $("oShift").value, machine: mach, to: $("oTo").value.trim() }); }
   else Object.assign(rec, { from: $("iFrom").value.trim(), ref: $("iRef").value.trim() });
   const twin = moves.find(x => dupKey(x) === dupKey(rec));
   if (twin && !confirm(`This looks like a line already logged:\n${twin.kind === "issue" ? "Issued" : "Received"} ${nq(twin.qty)} ${twin.unit || ""} × ${twin.item} on ${fmt(twin.date)}${twin.machine ? " for " + twin.machine : ""}${twin.to ? " to " + twin.to : ""}${twin.from ? " from " + twin.from : ""}, logged by ${twin.byName || "someone"}${twin.createdAt ? " at " + new Date(twin.createdAt).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" }) : ""}.\n\nIs this a second, separate ${twin.kind === "issue" ? "issue" : "delivery"}? Tap OK to log it, or Cancel if it's the same one.`)) { err("Not logged: it was the same as a line already there."); return; }
@@ -570,7 +577,7 @@ app.addEventListener("submit", async e => {
   err("");
   addDoc(collection(db, "stMoves"), rec).catch(fail);   // saved on the phone at once, sent when there is signal
   toast(`${rec.kind === "issue" ? "Issued" : "Received"}: ${nq(qty)} ${rec.unit} × ${name}${rec.price ? " (" + R(qty * rec.price) + ")" : ""}`);
-  ["Qty", "Note", "Other", "Unit", "To", "From", "Ref"].forEach(k => { const el = $(P + k); if (el) el.value = k === "Qty" ? "1" : ""; });
+  ["Qty", "Note", "Other", "Unit", "PriceEach", "To", "From", "Ref", "MachOther"].forEach(k => { const el = $(P + k); if (el) el.value = k === "Qty" ? "1" : ""; });
   if (cat === "GET") form[kind].itemId = ""; render();
 });
 
