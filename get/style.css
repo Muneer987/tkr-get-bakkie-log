@@ -101,3 +101,13 @@ details.more summary{cursor:pointer;font-weight:600;color:var(--muted);min-heigh
 .viewer .danger{background:#1a1a1a}
 .sticky{position:sticky;top:0;z-index:2;background:var(--bg);padding-block:8px;margin-top:-8px;margin-bottom:8px}
 .logolink{display:inline-flex;border-radius:50%;flex:none}.logolink:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.how{background:#111;color:#f2efe8;border:2px solid #d4a12a;border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:15.5px}
+.how b:first-child{color:#d4a12a;font-family:var(--display);font-size:19px}
+.how ol{margin:6px 0 0;padding-left:22px;display:grid;gap:4px}
+.bign{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;background:#d4a12a;color:#141006;font-size:18px;flex:none}
+.nowtiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}
+.nowt{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column}
+.nowt span{font-size:13px;color:var(--muted);font-weight:600}.nowt b{font-family:var(--display);font-size:34px;line-height:1.1;color:var(--gold)}
+.nowt.neg b{color:var(--bad)}
+.savebig{min-height:60px;font-size:20px}
+.tile4{min-height:72px}

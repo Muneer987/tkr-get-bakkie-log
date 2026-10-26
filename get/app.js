@@ -6,16 +6,16 @@ const loadLib = src => new Promise((res, rej) => { if (document.querySelector(`s
 const ITEMS = ["140 mm bits", "102 mm bits", "Rods", "Starter rods", "Shanks", "Other"];
 const RIGS = ["TDR 013", "TDR 015", "TDR 014"];
 const TYPES = {
-  received: { label: "Received from store", cls: "in", rig: false },
-  fitted:   { label: "Fitted on rig", cls: "out", rig: true },
+  received: { label: "Taken from the store", cls: "in", rig: false },
+  fitted:   { label: "Put on rig", cls: "out", rig: true },
   returned: { label: "Old item back from rig", cls: "in", rig: true },
-  back:     { label: "Handed back to store", cls: "out", rig: false },
+  back:     { label: "Taken back to the store", cls: "out", rig: false },
   lost:     { label: "Lost in hole", cls: "lost", rig: true },
   extra:    { label: "Extra", cls: "in", rig: false },
 };
 const PICK = ["received", "fitted", "back", "lost"];          // what the driver chooses from ("returned" stays for older records)
 const GET_ITEMS = ITEMS.filter(i => i !== "Other");          // anything else goes in Extras
-const TYPE_SHORT = { received: "From the store", fitted: "Fitted on a rig", back: "Back to the store", lost: "Lost in the hole" };
+const TYPE_SHORT = { received: "📦 Took from the store", fitted: "🔧 Put on a rig", back: "↩️ Took back to the store", lost: "❌ Lost in the hole" };
 let pick = { type: "received", item: GET_ITEMS[0], rig: RIGS[0] };   // the big buttons on the Add card
 let addMode = "get";
 
@@ -284,8 +284,9 @@ function renderShift() {
       <button class="ghost" id="back">← All shifts</button>
       <span class="status" id="status">${esc(statusMsg)}</span>
     </div>
+    ${ro ? "" : `<div class="how"><b>How it works</b><ol><li><b>Start:</b> type your name and the bakkie number.</li><li><b>During the shift:</b> every time GET goes onto or off the bakkie, tap what happened, the item and how many, then tap <b>Save</b>.</li><li><b>End:</b> fill in what is on each rig, sign and tap <b>Close shift</b>.</li></ol></div>`}
     <section class="card">
-      <h2>${esc(dayName(s.date))} ${esc(fmtDate(s.date))} · ${esc(s.shift)} shift <span class="pill ${s.closed ? "closed" : "open"}">${s.closed ? "Closed" : "Open"}</span></h2>
+      <h2><span class="bign">1</span>Start of shift · ${esc(dayName(s.date))} ${esc(fmtDate(s.date))} · ${esc(s.shift)} <span class="pill ${s.closed ? "closed" : "open"}">${s.closed ? "Closed" : "Open"}</span></h2>
       <div class="grid">
         <label>Date ${field("date", s.date, 'type="date"')}</label>
         <label>Shift <select data-f="shift" ${off}>${["Day", "Night"].map(x => `<option ${s.shift === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>
@@ -294,43 +295,24 @@ function renderShift() {
       </div>
     </section>
 
-    <section class="card">
-      <h2>GET in the bakkie</h2>
-      <div class="tbl mini"><table>
-        <thead><tr><th>Item</th><th class="num">Start</th><th class="num">Store</th><th class="num">Fitted</th><th class="num">Back</th><th class="num">Lost</th><th class="num">Now</th></tr></thead>
-        <tbody>${startRows}</tbody></table></div>
-      <p class="muted" style="margin:8px 0 0">Start = left after the last shift. Store = from the store. Now = what should be in the bakkie. The app works it out from what you log.</p>${short ? `<p class="flag" style="margin:6px 0 0">Below 0 means more was fitted or sent back than came from the store. Check that everything from the store is logged.</p>` : ""}
-    </section>
-
-    <section class="card">
-      <h2>Trips to the store</h2>
-      ${trips.length ? `<div class="tbl mini"><table>
-        <thead><tr><th>Trip</th><th>Out</th><th>Back</th><th></th></tr></thead>
-        <tbody>${tripRows}</tbody></table></div>` : ""}
-      <div class="row" style="margin-top:10px;justify-content:space-between">
-        <span class="muted">Every time the bakkie goes to the store, start a new trip.</span>
-        ${ro ? "" : `<button class="primary" id="newTrip">Start a new trip</button>`}
-      </div>
-    </section>
-
     <div class="cols">
       <section class="card">
-        <h2>Add</h2>
+        <h2><span class="bign">2</span>During the shift: log a move</h2>
         <div class="row" role="tablist" style="gap:8px;margin-bottom:12px">
-          <button type="button" class="${addMode === "get" ? "primary" : "ghost"}" data-mode="get" ${off}>GET</button>
-          <button type="button" class="${addMode === "extra" ? "primary" : "ghost"}" data-mode="extra" ${off}>Extras</button>
+          <button type="button" class="${addMode === "get" ? "primary" : "ghost"}" data-mode="get" ${off}>Bits, rods, shanks</button>
+          <button type="button" class="${addMode === "extra" ? "primary" : "ghost"}" data-mode="extra" ${off}>Something else</button>
         </div>
         <form id="moveForm" class="grid" autocomplete="off">
           ${trips.length === 1 ? `<input type="hidden" id="mTrip" value="${esc(trips[0].id)}">` : ""}${trips.length > 1 ? `<label>Trip <select id="mTrip" ${off}>${trips.map((tr, i) => `<option value="${esc(tr.id)}" ${i === trips.length - 1 ? "selected" : ""}>Trip ${i + 1}</option>`).join("")}</select></label>` : ""}
           ${addMode === "get" ? `
           <input type="hidden" id="mType" value="${esc(pick.type)}"><input type="hidden" id="mItem" value="${esc(pick.item)}"><input type="hidden" id="mRig" value="${esc(pick.rig)}">
-          <div class="step" style="grid-column:1/-1"><span class="stepn">1</span> What happened?</div>
+          <div class="step" style="grid-column:1/-1">What happened?</div>
           <div class="tiles4" style="grid-column:1/-1">${PICK.map(k => `<button type="button" class="tile4 ${TYPES[k].cls}" data-pk="type:${k}" aria-pressed="${pick.type === k}" ${off}>${TYPE_SHORT[k]}</button>`).join("")}</div>
-          ${TYPES[pick.type].rig ? `<div class="step" style="grid-column:1/-1"><span class="stepn">2</span> Which rig?</div>
+          ${TYPES[pick.type].rig ? `<div class="step" style="grid-column:1/-1">Which rig?</div>
           <div class="tiles4" style="grid-column:1/-1">${RIGS.map(r => `<button type="button" class="tile4" data-pk="rig:${esc(r)}" aria-pressed="${pick.rig === r}" ${off}>${esc(r)}</button>`).join("")}</div>` : ""}
-          <div class="step" style="grid-column:1/-1"><span class="stepn">${TYPES[pick.type].rig ? 3 : 2}</span> Which item?</div>
+          <div class="step" style="grid-column:1/-1">Which item?</div>
           <div class="tiles4" style="grid-column:1/-1">${GET_ITEMS.map(i => `<button type="button" class="tile4" data-pk="item:${esc(i)}" aria-pressed="${pick.item === i}" ${off}>${esc(i)}</button>`).join("")}</div>
-          <div class="step" style="grid-column:1/-1"><span class="stepn">${TYPES[pick.type].rig ? 4 : 3}</span> How many?</div>
+          <div class="step" style="grid-column:1/-1">How many?</div>
           <div class="qtyrow" style="grid-column:1/-1"><button type="button" data-qty="-1" aria-label="One less" ${off}>−</button><input id="mQty" inputmode="numeric" value="1" aria-label="Quantity" ${off}><button type="button" data-qty="1" aria-label="One more" ${off}>+</button></div>` : `
           <label style="grid-column:1/-1">What is it <input id="mWhat" placeholder="For example 20 L hydraulic oil, hose, grease" ${off}></label>
           <label>Qty (optional) <input id="mQty" inputmode="numeric" ${off}></label>`}
@@ -343,26 +325,44 @@ function renderShift() {
             <div class="thumbs" style="margin-top:6px">${draftPhotos.map((p, i) => `<img class="thumb" data-draft="${i}" alt="New photo">`).join("")}
               <button type="button" class="ghost addph" id="takePhoto" ${off}>Take photo</button></div>
           </div></div></details>
-          <div style="grid-column:1/-1"><button class="primary" type="submit" style="width:100%" ${off}>${addMode === "get" ? "Add GET" : "Add extra"}${draftPhotos.length ? ` with ${draftPhotos.length} photo${draftPhotos.length === 1 ? "" : "s"}` : ""}</button></div>
+          <div style="grid-column:1/-1"><button class="primary savebig" type="submit" style="width:100%" ${off}>${"Save"}${draftPhotos.length ? ` with ${draftPhotos.length} photo${draftPhotos.length === 1 ? "" : "s"}` : ""}</button></div>
         </form>
         <div id="moveErr" class="flag" style="margin-top:8px"></div>
       </section>
       <section class="card">
-        <h2>This shift</h2>
+        <h2>In the bakkie now</h2>
+        <div class="nowtiles">${GET_ITEMS.filter(i => ["140 mm bits", "Rods", "Shanks"].includes(i) || bal[i].start || bal[i].received || bal[i].fitted || bal[i].back || bal[i].lost).map(i => `<div class="nowt ${bal[i].end < 0 ? "neg" : ""}"><span>${esc(i)}</span><b>${bal[i].end}</b></div>`).join("")}</div>
+        <p class="muted" style="margin:6px 0 0">The app works this out from what you save. You don't type it.</p>${short ? `<p class="flag" style="margin:6px 0 0">Below 0: more was fitted or taken back than came from the store. Check that everything from the store is saved.</p>` : ""}
+        <details class="more" style="margin-top:10px"><summary>See how it is worked out</summary><div style="margin-top:10px">
+      <div class="tbl mini"><table>
+          <thead><tr><th>Item</th><th class="num">Start</th><th class="num">Store</th><th class="num">Fitted</th><th class="num">Back</th><th class="num">Lost</th><th class="num">Now</th></tr></thead>
+          <tbody>${startRows}</tbody></table></div>
+        <p class="muted" style="margin:8px 0 0">Start = left after the last shift. Store = from the store. Now = what should be in the bakkie. The app works it out from what you log.</p>${short ? `<p class="flag" style="margin:6px 0 0">Below 0 means more was fitted or sent back than came from the store. Check that everything from the store is logged.</p>` : ""}
+      </div></details>
+        <details class="more" style="margin-top:10px"><summary>Trips to the store${trips.length > 1 ? " (" + trips.length + ")" : ""}</summary><div style="margin-top:10px">
+      ${trips.length ? `<div class="tbl mini"><table>
+        <thead><tr><th>Trip</th><th>Out</th><th>Back</th><th></th></tr></thead>
+        <tbody>${tripRows}</tbody></table></div>` : ""}
+      <div class="row" style="margin-top:10px;justify-content:space-between">
+        <span class="muted">Every time the bakkie goes to the store, start a new trip.</span>
+        ${ro ? "" : `<button class="primary" id="newTrip">Start a new trip</button>`}
+      </div>
+    </div></details>
+      </section>
+      <section class="card">
+        <h2>Saved this shift</h2>
         <div class="moves">${moves}</div>
 
       </section>
     </div>
 
     <section class="card">
-      <details class="more" ${RIGS.some(r => Object.values(s.rigs?.[r] || {}).some(v => v !== "" && v != null)) ? "open" : ""}><summary><b>End of shift:</b> what is on each rig (tap to fill in)</summary>
-      <div class="tbl" style="margin-top:10px"><table>
+      <h2><span class="bign">3</span>End of shift</h2>
+      <h3 style="margin-top:4px">What is on each rig now</h3>
+      <div class="tbl"><table>
         <thead><tr><th>Rig</th><th>Bits</th><th>Rods</th><th>Shanks</th></tr></thead>
-        <tbody>${rigRows}</tbody></table></div></details>
-    </section>
-
-    <section class="card">
-      <h2>Sign-off</h2>
+        <tbody>${rigRows}</tbody></table></div>
+      <h3>Sign</h3>
       <label style="margin-bottom:12px">Comments <textarea data-f="comments" rows="2" ${off}>${esc(s.comments)}</textarea></label>
       <div class="grid">
         <label>GET operator ${field("signOperator", s.signOperator, 'placeholder="Full name"')}</label>
