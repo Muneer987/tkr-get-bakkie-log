@@ -305,6 +305,12 @@ async function seedReports() {
       }
       await setDoc(flag, { done: Date.now(), by: email, lines: n }); toast(S.msg);
     }
+    // 28/10 09:23: 33 dust masks in stock at Rompad Stores, as given by Muneer
+    const dm = doc(db, "stConfig", "fix-2026-10-28-dustmasks");
+    if (!(await getDoc(dm)).exists()) {
+      await setDoc(doc(db, "stCounts", "fix-2026-10-28-dustmasks"), { store: "rompad", itemId: "ppe-resp", item: "Respirator / dust mask", getKey: "", date: "2026-10-28", count: 33, byName: "Muneer", byUid: user.uid, src: "admin", createdAt: Date.parse("2026-10-28T09:23:00+02:00") });
+      await setDoc(dm, { done: Date.now(), by: email }); toast("Dust masks set to 33 in stock at Rompad Stores");
+    }
     // 24/10: oil, antifreeze and degreaser to Simon were for TDR013; book them to that machine where they were loaded before
     const fix = doc(db, "stConfig", "fix-2026-10-24-tdr013");
     if (!(await getDoc(fix)).exists()) {
