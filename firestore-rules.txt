@@ -1,5 +1,5 @@
 rules_version = '2';
-// TKR Operations app – rules updated 25 Oct 2026
+// TKR Operations app – rules updated 28 Oct 2026 (supervisor added)
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -7,6 +7,12 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function myEmail() { return signedIn() ? request.auth.token.get('email', '').lower() : ''; }
     function isAdmin() { return myEmail() in ['muneer@tkroperations.com', 'amogelang@tkroperations.com']; }
+    // supervisor (Edwin): full rights in Stores and the GET Bakkie Log only
+    function isSupervisor() {
+      return signedIn() && exists(/databases/$(database)/documents/config/roles)
+        && myEmail() in get(/databases/$(database)/documents/config/roles).data.get('supervisors', []);
+    }
+    function sectionBoss() { return isAdmin() || isSupervisor(); }
     function isManager() {
       return isAdmin() || (exists(/databases/$(database)/documents/config/roles)
         && myEmail() in get(/databases/$(database)/documents/config/roles).data.get('managers', []));
@@ -54,28 +60,28 @@ service cloud.firestore {
     match /getOperators/{uid} {
       allow read: if signedIn();
       allow create: if signedIn() && uid == request.auth.uid && request.resource.data.approved == false;
-      allow update, delete: if isAdmin();
+      allow update, delete: if sectionBoss();
     }
     match /getExportRequests/{id} {
-      allow read: if isAdmin() || (signedIn() && resource.data.opUid == request.auth.uid);
+      allow read: if sectionBoss() || (signedIn() && resource.data.opUid == request.auth.uid);
       allow create: if signedIn() && request.resource.data.opUid == request.auth.uid && request.resource.data.status == 'pending';
-      allow update, delete: if isAdmin();
+      allow update, delete: if sectionBoss();
     }
     match /getExportGrants/{uid} {
-      allow read: if isAdmin() || (signedIn() && uid == request.auth.uid);
-      allow write: if isAdmin();
+      allow read: if sectionBoss() || (signedIn() && uid == request.auth.uid);
+      allow write: if sectionBoss();
     }
     match /getShifts/{id} {
-      allow read: if isAdmin() || exportGrant() || (signedIn() && resource.data.ownerUid == request.auth.uid);
+      allow read: if sectionBoss() || exportGrant() || (signedIn() && resource.data.ownerUid == request.auth.uid);
       allow create: if approvedOp() && request.resource.data.ownerUid == request.auth.uid;
       allow update: if approvedOp() && resource.data.ownerUid == request.auth.uid && request.resource.data.ownerUid == request.auth.uid;
-      allow delete: if isAdmin() || (approvedOp() && (resource == null || resource.data.ownerUid == request.auth.uid));
+      allow delete: if sectionBoss() || (approvedOp() && (resource == null || resource.data.ownerUid == request.auth.uid));
     }
     match /getPhotos/{id} {
-      allow read: if isAdmin() || exportGrant() || (signedIn() && resource.data.ownerUid == request.auth.uid);
+      allow read: if sectionBoss() || exportGrant() || (signedIn() && resource.data.ownerUid == request.auth.uid);
       allow create: if approvedOp() && request.resource.data.ownerUid == request.auth.uid;
       allow update: if approvedOp() && resource.data.ownerUid == request.auth.uid && request.resource.data.ownerUid == request.auth.uid;
-      allow delete: if isAdmin() || (approvedOp() && (resource == null || resource.data.ownerUid == request.auth.uid));
+      allow delete: if sectionBoss() || (approvedOp() && (resource == null || resource.data.ownerUid == request.auth.uid));
     }
 
     // ---------- GET Forecast ----------
@@ -89,32 +95,32 @@ service cloud.firestore {
       return signedIn() && exists(/databases/$(database)/documents/stUsers/$(request.auth.uid))
         && get(/databases/$(database)/documents/stUsers/$(request.auth.uid)).data.get('approved', false) == true;
     }
-    function stReader() { return isManager() || stStaff(); }
+    function stReader() { return isManager() || isSupervisor() || stStaff(); }
 
     match /stUsers/{uid} {
       allow read: if signedIn();
       allow create: if signedIn() && uid == request.auth.uid && request.resource.data.approved == false;
-      allow update, delete: if isAdmin();
+      allow update, delete: if sectionBoss();
     }
     match /stMoves/{id} {
       allow read: if stReader();
-      allow create: if (stStaff() || isAdmin()) && request.resource.data.byUid == request.auth.uid
+      allow create: if (stStaff() || sectionBoss()) && request.resource.data.byUid == request.auth.uid
         && request.resource.data.kind in ['issue', 'receive'] && request.resource.data.store in ['drill', 'rompad'];
-      allow update: if isAdmin();
-      allow delete: if isAdmin() || (stStaff() && resource.data.byUid == request.auth.uid);
+      allow update: if sectionBoss();
+      allow delete: if sectionBoss() || (stStaff() && resource.data.byUid == request.auth.uid);
     }
     match /stCounts/{id} {
       allow read: if stReader();
-      allow create: if (stStaff() || isAdmin()) && request.resource.data.byUid == request.auth.uid;
-      allow update, delete: if isAdmin();
+      allow create: if (stStaff() || sectionBoss()) && request.resource.data.byUid == request.auth.uid;
+      allow update, delete: if sectionBoss();
     }
     match /stConfig/status {
       allow read: if stReader();
-      allow write: if stStaff() || isAdmin();
+      allow write: if stStaff() || sectionBoss();
     }
     match /stConfig/{docId} {
       allow read: if stReader();
-      allow write: if isAdmin();
+      allow write: if sectionBoss();
     }
 
     // ---------- Attendance ----------

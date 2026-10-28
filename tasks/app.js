@@ -52,6 +52,9 @@ function linkLabel(l) { if (l.label) return l.label; try { const u = new URL(l.u
 let user = null, email = "", managers = [], team = [], tasks = [], selected = ymd(new Date());
 let me = "", managing = false, linkFor = null, unsubTasks = null, teamLoaded = false, pendingWrites = false;
 const isAdmin = () => ADMINS.includes(email);
+let supers = [];
+const isSup = () => !!email && supers.includes(email);           // supervisor: Stores and GET Bakkie Log only
+const getBoss = () => isAdmin() || isSup();
 const isManager = () => isAdmin() || (email && managers.includes(email));
 const myEmp = () => (user && !user.isAnonymous && team.find(p => p.uid && p.uid === user.uid)) || null;
 const canEdit = personId => isAdmin() || (!!personId && myEmp()?.id === personId);
@@ -86,14 +89,18 @@ let started = false, unsubTeam = null, unsubRoles = null, unsubOps = null, getOp
 function start() {
   if (unsubTeam) unsubTeam(); if (unsubRoles) unsubRoles(); if (unsubOps) { unsubOps(); unsubOps = null; }
   if (unsubReqs) { unsubReqs(); unsubReqs = null; }
-  if (isAdmin()) unsubReqs = onSnapshot(collection(db, "getExportRequests"), s => { getReqs = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 15); renderManage(); }, () => {});
-  if (isAdmin()) unsubOps = onSnapshot(collection(db, "getOperators"), s => { getOps = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.approved - b.approved) || a.name.localeCompare(b.name)); renderManage(); }, () => {});
-  unsubRoles = onSnapshot(doc(db, "config", "roles"), s => { managers = ((s.exists() && s.data().managers) || []).map(x => String(x).toLowerCase()); renderAll(); }, () => {});
+  subGet();
+  unsubRoles = onSnapshot(doc(db, "config", "roles"), s => { managers = ((s.exists() && s.data().managers) || []).map(x => String(x).toLowerCase()); supers = ((s.exists() && s.data().supervisors) || []).map(x => String(x).toLowerCase()); subGet(); renderAll(); }, () => {});
   unsubTeam = onSnapshot(collection(db, "team"), s => {
     team = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.order || 0) - (b.order || 0));
     teamLoaded = true; renderAll();
   }, e => netNote("The board couldn't load. Check the signal and open it again."));
   subKey = ""; subscribeTasks(true); started = true;
+}
+function subGet() {
+  if (!getBoss() || unsubOps) return;
+  unsubReqs = onSnapshot(collection(db, "getExportRequests"), s => { getReqs = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 15); renderManage(); }, () => {});
+  unsubOps = onSnapshot(collection(db, "getOperators"), s => { getOps = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.approved - b.approved) || a.name.localeCompare(b.name)); renderManage(); }, () => {});
 }
 let subKey = "";
 function subscribeTasks(force) {
@@ -132,15 +139,16 @@ function renderSelects() {
   $("meWrap").hidden = !!(user && !user.isAnonymous && !mine);
   $("filter").hidden = !isManager();
   $("signBtn").textContent = !user || user.isAnonymous ? "Manager sign in" : "Sign out";
-  $("who").textContent = !user || user.isAnonymous ? "" : mine ? `Signed in as ${mine.name}` : `Signed in as ${showName(email)}${isAdmin() ? " · app admin" : " · manager"}`;
+  $("who").textContent = !user || user.isAnonymous ? "" : mine ? `Signed in as ${mine.name}` : `Signed in as ${showName(email)}${isAdmin() ? " · app admin" : isSup() ? " · supervisor" : " · manager"}`;
   f.innerHTML = `<option value="">Everyone</option>` + team.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
   f.value = team.some(p => p.id === cur) ? cur : "";
 }
 function renderControls() {
   $("exportBtn").hidden = !isManager();
-  $("manageBtn").hidden = !isAdmin();
+  $("manageBtn").hidden = !getBoss();
   if (!isManager()) $("exportBox").hidden = true;
-  if (!isAdmin()) { managing = false; $("manageBox").hidden = true; }
+  if (!getBoss()) { managing = false; $("manageBox").hidden = true; }
+  ["mTeam", "mMgr", "mSup"].forEach(id => { const el = $(id); if (el) el.hidden = !isAdmin(); });
 }
 function render() {
   $("date").value = selected;
@@ -206,10 +214,11 @@ function renderTeam(filter) {
   }).join("");
 }
 function renderManage() {
-  if (!isAdmin()) return;
+  if (!getBoss()) return;
   $("teamList").innerHTML = team.length ? team.map(p => `<div class="it"><span>${esc(p.name)} <span class="muted">· ${p.uid ? "PIN set" : "no PIN yet"}</span></span><span class="row" style="gap:6px">${p.uid ? `<button data-resetpin="${esc(p.id)}">Reset PIN</button>` : ""}<button class="danger" data-rm="${esc(p.id)}">Remove</button></span></div>`).join("") : `<div class="muted">No employees yet.</div>`;
   $("opList").innerHTML = getOps.length ? getOps.map(o => `<div class="it"><span>${esc(o.name)} <span class="muted">· ${o.approved ? "approved" : "waiting for approval"}</span></span><span class="row" style="gap:6px">${o.approved ? "" : `<button class="primary" data-opok="${esc(o.id)}">Approve</button>`}<button class="danger" data-opdel="${esc(o.id)}">${o.approved ? "Reset PIN / remove" : "Decline"}</button></span></div>`).join("") : `<div class="muted">No GET operators have registered yet.</div>`;
   $("reqList").innerHTML = getReqs.length ? getReqs.map(q => `<div class="it"><span>${esc(q.opName)} <span class="muted">· ${fmt(q.from)} to ${fmt(q.to)} · ${q.status === "pending" ? "waiting" : q.status}</span></span>${q.status === "pending" ? `<span class="row" style="gap:6px"><button class="primary" data-reqok="${esc(q.id)}">Approve</button><button class="danger" data-reqno="${esc(q.id)}">Decline</button></span>` : ""}</div>`).join("") : `<div class="muted">No export requests.</div>`;
+  $("supList").innerHTML = supers.map(m => `<div class="it"><span>${esc(showName(m))}</span><button class="danger" data-rmsup="${esc(m)}">Remove</button></div>`).join("") || `<div class="muted">No supervisors added yet.</div>`;
   $("mgrList").innerHTML = (managers.length ? managers : []).map(m => `<div class="it"><span>${esc(m)}</span><button class="danger" data-rmmgr="${esc(m)}">Remove</button></div>`).join("") || `<div class="muted">No managers added yet.</div>`;
 }
 
@@ -351,8 +360,22 @@ $("manageBox").addEventListener("click", async e => {
     return;
   }
   if (b.dataset.rm) { const p = team.find(x => x.id === b.dataset.rm); if (p && confirm(`Remove ${p.name} from the board? Their past tasks are kept.`)) deleteDoc(doc(db, "team", p.id)).catch(fail); }
+  if (b.dataset.rmsup) { if (confirm(`Remove ${showName(b.dataset.rmsup)} as a supervisor?`)) setDoc(doc(db, "config", "roles"), { supervisors: arrayRemove(b.dataset.rmsup) }, { merge: true }).catch(fail); return; }
   if (b.dataset.rmmgr) { if (confirm(`Remove ${b.dataset.rmmgr} as a manager?`)) setDoc(doc(db, "config", "roles"), { managers: arrayRemove(b.dataset.rmmgr) }, { merge: true }).catch(fail); }
 });
+$("addSup").onsubmit = async e => {
+  e.preventDefault();
+  const raw = $("supUser").value.trim(), em = toLogin(raw).toLowerCase(), pw = $("supPass").value, msg = t => $("supMsg").textContent = t;
+  if (!raw) { msg("Type the supervisor's username, for example Edwin."); return; }
+  if (pw.length < 6) { msg("The password must be at least 6 characters."); return; }
+  msg("Adding…"); let note = "";
+  const tmp = initializeApp(firebaseConfig, "add-" + Date.now());
+  try { await createUserWithEmailAndPassword(getAuth(tmp), em, pw); note = " Their sign-in is made."; }
+  catch (err) { if (err?.code === "auth/email-already-in-use") note = " They already had a sign-in, so their old password stays."; else { msg("The sign-in couldn't be made. Check the signal and try again."); deleteApp(tmp).catch(() => {}); return; } }
+  deleteApp(tmp).catch(() => {});
+  try { await setDoc(doc(db, "config", "roles"), { supervisors: arrayUnion(em) }, { merge: true }); msg(`${showName(em)} can now sign in as supervisor.${note}`); $("supUser").value = ""; $("supPass").value = ""; }
+  catch (err) { fail(err); msg(""); }
+};
 $("addMgr").onsubmit = async e => {
   e.preventDefault();
   const em = toLogin($("mgrEmail").value).toLowerCase(), pw = $("mgrPass").value;

@@ -732,8 +732,9 @@ app.addEventListener("submit", async e => {
       const tmp = fb.initializeApp(FIREBASE_CONFIG, "get-admin-" + Date.now()), a = fb.getAuth(tmp);
       const cred = await fb.signInWithEmailAndPassword(a, toLogin($("#aeEmail").value), $("#aePass").value);
       const em = (cred.user.email || "").toLowerCase();
-      if (!["muneer@tkroperations.com", "amogelang@tkroperations.com"].includes(em)) { await fb.signOut(a).catch(() => {}); fb.deleteApp(tmp).catch(() => {}); exportMsg = "Only an admin can export."; render(); return; }
-      exportPass = { by: em, until: Date.now() + 15 * 60e3, db: fb.initializeFirestore(tmp, {}) }; exportMsg = ""; showAdminExport = false; render();
+      const tdb = fb.initializeFirestore(tmp, {});
+      if (!(await isGetBoss(em, tdb))) { await fb.signOut(a).catch(() => {}); fb.deleteApp(tmp).catch(() => {}); exportMsg = "Only an admin or supervisor can export."; render(); return; }
+      exportPass = { by: em, until: Date.now() + 15 * 60e3, db: tdb }; exportMsg = ""; showAdminExport = false; render();
     } catch (x) { exportMsg = !navigator.onLine ? "No signal. Signing in needs signal." : "Email or password is wrong."; render(); }
     return;
   }
@@ -870,13 +871,20 @@ async function firebase() {
     return true;
   } catch { return false; }
 }
+// admins, and supervisors listed in config/roles, run the GET Bakkie Log
+const GET_ADMINS = ["muneer@tkroperations.com", "amogelang@tkroperations.com"];
+async function isGetBoss(em, adb) {
+  if (GET_ADMINS.includes(em)) return true;
+  try { const r = await fb.getDoc(fb.doc(adb, "config", "roles")); return ((r.exists() && r.data().supervisors) || []).map(x => String(x).toLowerCase()).includes(em); } catch { return false; }
+}
 // The one TKR admin sign-in shared by every section: an admin signed in elsewhere in the app can export here without typing the password again.
 let mainApp = null;
 async function sharedAdmin() {
   if (!(await firebase())) return null;
   try { mainApp = mainApp || fb.initializeApp(FIREBASE_CONFIG); const a = fb.getAuth(mainApp); await a.authStateReady?.();
     const em = (a.currentUser?.email || "").toLowerCase();
-    return ["muneer@tkroperations.com", "amogelang@tkroperations.com"].includes(em) ? { email: em, db: fb.initializeFirestore(mainApp, {}) } : null; } catch { return null; }
+    if (!em) return null; let mdb; try { mdb = fb.initializeFirestore(mainApp, {}); } catch { mdb = fb.getFirestore(mainApp); }
+    return (await isGetBoss(em, mdb)) ? { email: em, db: mdb } : null; } catch { return null; }
 }
 async function ensureSignedIn() {
   await firebase(); await fbAuth.authStateReady?.();
@@ -976,7 +984,7 @@ $("#lockForm").addEventListener("submit", async e => {
         tmp = fb.initializeApp(FIREBASE_CONFIG, "get-admin-" + Date.now()); const a = fb.getAuth(tmp);
         const cred = await fb.signInWithEmailAndPassword(a, toLogin($("#laEmail").value), $("#laPass").value);
         em = (cred.user.email || "").toLowerCase(); adb = fb.initializeFirestore(tmp, {});
-        if (!["muneer@tkroperations.com", "amogelang@tkroperations.com"].includes(em)) { err().textContent = "Only an admin can do this."; return; }
+        if (!(await isGetBoss(em, adb))) { err().textContent = "Only an admin or supervisor can do this."; return; }
       }
       err().textContent = "Making the combined report…";
       await loadLib("../lib/exceljs.min.js");

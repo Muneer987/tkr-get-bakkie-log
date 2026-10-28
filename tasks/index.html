@@ -56,12 +56,23 @@
   <section id="manageBox" class="card" hidden>
     <h2>Manage</h2>
     <div class="cols2">
-      <div>
+      <div id="mTeam">
         <h3>Employees on the board</h3>
         <form id="addPerson" class="row"><input id="newPerson" placeholder="Employee name" maxlength="60" style="flex:1 1 200px"><button class="primary">Add employee</button></form>
         <div id="teamList" class="list"></div>
       </div>
-      <div>
+      <div id="mSup">
+        <h3>Supervisors (Stores and GET Bakkie Log)</h3>
+        <p class="muted" style="margin-top:0">A supervisor can do everything in Stores and the GET Bakkie Log, like an admin. They don't get the GET Forecast or Attendance.</p>
+        <form id="addSup" class="grid2">
+          <input id="supUser" type="text" autocapitalize="none" placeholder="Username, for example Edwin" autocomplete="off">
+          <input id="supPass" type="text" placeholder="Password (6+ characters)" autocomplete="off">
+          <button class="primary">Add supervisor</button>
+        </form>
+        <div id="supList" class="list"></div>
+        <p class="muted" id="supMsg"></p>
+      </div>
+      <div id="mMgr">
         <h3>Managers who can download</h3>
         <p class="muted" style="margin-top:0">Muneer and Amogelang are app admins. Add a manager here with their email and a password. They sign in with "Manager sign in".</p>
         <form id="addMgr" class="grid2">

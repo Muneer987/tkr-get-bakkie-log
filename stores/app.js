@@ -70,13 +70,15 @@ const DEFAULT_ITEMS = [
 ];
 
 /* ---------- state ---------- */
-let user = null, email = "", me = null, managers = [], staff = [], items = DEFAULT_ITEMS.slice(), itemsSaved = false, moves = [], counts = [], status = {}, settings = { supervisor: "Edwin Khonkhobe" };
+let user = null, email = "", me = null, managers = [], supers = [], staff = [], items = DEFAULT_ITEMS.slice(), itemsSaved = false, moves = [], counts = [], status = {}, settings = { supervisor: "Edwin Khonkhobe" };
 let registering = false, fcMetres = null;
 let store = lsGet("tkr-st-store") || "drill", tab = lsGet("tkr-st-tab") || "log", month = today().slice(0, 7), ppeStore = "all", subs = [], picked = null, gateMode = "pick", gateMsg = "", form = { out: {}, in: {} };
 const isAdmin = () => ADMINS.includes(email);
-const isManager = () => isAdmin() || (!!email && managers.includes(email));
+const isSup = () => !!email && supers.includes(email);            // supervisor (Edwin): everything in Stores, like an admin
+const isBoss = () => isAdmin() || isSup();
+const isManager = () => isBoss() || (!!email && managers.includes(email));
 const isStaff = () => !!me && me.approved;
-const canLog = () => isStaff() || isAdmin();
+const canLog = () => isStaff() || isBoss();
 const myName = () => me?.name || email;
 const app = $("app"), gate = $("gate");
 
@@ -89,11 +91,11 @@ async function bossCheck(u) {
   if (!u || u.isAnonymous || !u.email || u.email.endsWith("@staff.tkroperations.app")) return false;
   const em = u.email.toLowerCase(); if (ADMINS.includes(em)) return true;
   mainDb = mainDb || mkDb(mainApp);
-  try { const r = await getDoc(doc(mainDb, "config", "roles")); return ((r.exists() && r.data().managers) || []).map(x => String(x).toLowerCase()).includes(em); } catch { return false; }
+  try { const r = await getDoc(doc(mainDb, "config", "roles")); const d = r.exists() ? r.data() : {}; return [...(d.managers || []), ...(d.supervisors || [])].map(x => String(x).toLowerCase()).includes(em); } catch { return false; }
 }
 async function useBoss(u) {
   boss = true; auth = mainAuth; db = mainDb = mainDb || mkDb(mainApp); user = u; email = u.email.toLowerCase(); me = null;
-  try { const r = await getDoc(doc(db, "config", "roles")); managers = ((r.exists() && r.data().managers) || []).map(x => String(x).toLowerCase()); } catch {}
+  try { const r = await getDoc(doc(db, "config", "roles")); managers = ((r.exists() && r.data().managers) || []).map(x => String(x).toLowerCase()); supers = ((r.exists() && r.data().supervisors) || []).map(x => String(x).toLowerCase()); } catch {}
   subs.forEach(f => f()); subs = []; startApp();
 }
 (async () => {
@@ -102,6 +104,8 @@ async function useBoss(u) {
   if (await bossCheck(u)) { await useBoss(u); onAuthStateChanged(mainAuth, x => { if (boss && !x) location.reload(); }); return; }
   watchStores();
 })();
+// a manager on this phone switches to the store controller sign-in (their TKR sign-in in other sections stays)
+function staffSignIn() { subs.forEach(f => f()); subs = []; boss = false; auth = stAuth; db = stDb; user = null; email = ""; me = null; managers = []; supers = []; gateMode = "pick"; watchStores(); }
 function watchStores() { onAuthStateChanged(stAuth, async u => {
   user = u; email = (u?.email || "").toLowerCase(); me = null;
   subs.forEach(f => f()); subs = [];
@@ -114,7 +118,7 @@ function watchStores() { onAuthStateChanged(stAuth, async u => {
     if (!me.approved) { picked = me; showGate("wait"); return; }
   }
   if (!email.startsWith("st.")) {
-    try { const r = await getDoc(doc(db, "config", "roles")); managers = ((r.exists() && r.data().managers) || []).map(x => String(x).toLowerCase()); } catch {}
+    try { const r = await getDoc(doc(db, "config", "roles")); managers = ((r.exists() && r.data().managers) || []).map(x => String(x).toLowerCase()); supers = ((r.exists() && r.data().supervisors) || []).map(x => String(x).toLowerCase()); } catch {}
     if (!isManager()) { await signOut(auth); showGate("pick", "This email is not an admin or manager. Ask admin."); return; }
   }
   startApp();
@@ -326,7 +330,7 @@ async function seedReports() {
 /* ---------- live data ---------- */
 function startApp() {
   gate.hidden = true; app.hidden = false; $("outBtn").hidden = false;
-  $("who").textContent = (me ? me.name + " · store controller" : showName(email) + (isAdmin() ? " · admin" : " · manager"));
+  $("who").textContent = (me ? me.name + " · store controller" : showName(email) + (isAdmin() ? " · admin" : isSup() ? " · supervisor" : " · manager"));
   const live = (name, set) => subs.push(onSnapshot(collection(db, name), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => { console.warn(e); netNote("Couldn't load everything. Check the signal."); }));
   live("stMoves", v => moves = v); live("stCounts", v => counts = v);
   if (boss && isAdmin()) setTimeout(async () => { await seedOctoberGet(); await seedReports(); }, 1500);
@@ -334,7 +338,7 @@ function startApp() {
   subs.push(onSnapshot(doc(db, "stConfig", "status"), s => { status = s.exists() ? (s.data().machines || {}) : {}; render(); }, () => {}));
   subs.push(onSnapshot(doc(db, "stConfig", "settings"), s => { if (s.exists()) settings = Object.assign({ supervisor: "" }, s.data()); render(); }, () => {}));
   if (boss) subs.push(onSnapshot(collection(db, "fcMetres"), s => { fcMetres = s.docs.map(d => d.data()); render(); }, () => {}));
-  if (isAdmin()) subs.push(onSnapshot(collection(db, "stUsers"), s => { staff = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name)); render(); }, () => {}));
+  if (isBoss()) subs.push(onSnapshot(collection(db, "stUsers"), s => { staff = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name)); render(); }, () => {}));
   render();
 }
 
@@ -376,7 +380,7 @@ function machineTotals(st, m) {
 const TABS = [["log", "Issue / Receive"], ["dash", "Dashboard"], ["ppe", "PPE"], ["stock", "Stock"], ["report", "Consumption report"], ["items", "Items & prices"], ["users", "Store controllers"]];
 function render() {
   if (app.hidden) return;
-  const tabs = TABS.filter(([k]) => (k !== "items" && k !== "users") || isAdmin()).filter(([k]) => k !== "log" || canLog());
+  const tabs = TABS.filter(([k]) => (k !== "items" && k !== "users") || isBoss());
   if (!tabs.some(([k]) => k === tab)) tab = tabs[0][0];
   const keep = {}; app.querySelectorAll("form [id]").forEach(el => { if ("value" in el && el.type !== "submit") keep[el.id] = el.value; });
   let h = `<div class="storesw" role="group" aria-label="Store">${Object.entries(STORES).map(([k, s]) => `<button data-store="${k}" aria-pressed="${store === k}">${s.name}</button>`).join("")}</div>
@@ -434,7 +438,7 @@ function lineHtml(x, canDel, dup) {
       <div class="meta">${fmt(x.date)}${x.shift ? " " + esc(x.shift) : ""} · ${esc(x.cat)}${x.machine ? " · " + esc(x.machine) : ""}${x.to ? " · to " + esc(x.to) : ""}${x.from ? " · from " + esc(x.from) : ""}${x.ref ? " · " + esc(x.ref) : ""}${x.note ? " · " + esc(x.note) : ""} · logged by ${esc(x.byName || "")}</div></div>
     ${canDel ? `<button class="ghost" data-del="${esc(x.id)}">Remove</button>` : "<span></span>"}</div>`;
 }
-const mayDel = x => isAdmin() || (me && x.byUid === user?.uid && x.date >= ymd(new Date(Date.now() - 2 * 864e5)));
+const mayDel = x => isBoss() || (me && x.byUid === user?.uid && x.date >= ymd(new Date(Date.now() - 2 * 864e5)));
 function logView() {
   const recent = moves.filter(x => x.store === store).sort((a, b) => (b.date + pad(b.createdAt || 0)).localeCompare(a.date + pad(a.createdAt || 0))).slice(0, 40);
   const dups = duplicates(), mine = [...dups.keys()].map(id => moves.find(x => x.id === id)).filter(x => x && x.store === store);
@@ -578,6 +582,7 @@ app.addEventListener("change", e => {
 app.addEventListener("input", e => { if (e.target.id === "oQty" || e.target.id === "iQty") syncForms(); });
 app.addEventListener("submit", async e => {
   e.preventDefault(); const kind = e.target.dataset.kind; if (!kind) return;
+  if (!canLog()) { if (confirm("Only a store controller can issue or receive.\n\nTap OK to sign in as a store controller with your name and PIN.")) staffSignIn(); return; }
   const P = kind === "out" ? "o" : "i", err = t => { $(P + "Err").textContent = t; };
   const cat = $(P + "Cat").value;
   const id = cat === "GET" ? form[kind].itemId : $(P + "Item").value, it = itemOf(id);
