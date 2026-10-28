@@ -43,8 +43,9 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 /* ---------- what the stores hold ---------- */
 const STORES = { drill: { name: "Drill Stores", sheet: "TDR Drill Rigs", sub: "Drill rigs (TDR)", machines: ["TDR013", "TDR014", "TDR015"] },
   rompad: { name: "Rompad Stores", sheet: "Rompad Rockbreakers", sub: "Rockbreakers (TKRH) – Rompad", machines: ["TKRH011", "TKRH012", "TKRH015", "TKRH016", "TKRH017", "TKRH019", "TKRH020", "TKRH021"] } };
-const OILS = ["Hydraulic oil", "Engine oil", "Grease", "Rockdrill / compressor oil"];
-const CATS = { drill: ["GET", ...OILS, "Spares", "PPE"], rompad: [...OILS, "Moil locks", "Spares", "PPE"] };
+const OILS = ["Hydraulic oil", "Engine oil", "Grease", "Rockdrill / compressor oil", "Other oils & lubricants"];
+const OIL20 = o => o !== "Grease" && o !== "Other oils & lubricants";
+const CATS = { drill: ["GET", ...OILS, "Spares", "Fasteners", "PPE"], rompad: [...OILS, "Moil locks", "Spares", "Fasteners", "PPE"] };
 const GET_KEYS = [["BIT", "Bits"], ["ROD", "Rods"], ["SHANK", "Shanks"], ["HAMMER", "Hammers"]];
 const PPE_ICON = { helmet: "⛑️", glasses: "🥽", gloves: "🧤", boots: "🥾", vest: "🦺", respirator: "😷", ear: "🎧", harness: "🪢", other: "📦" };
 const DEFAULT_ITEMS = [
@@ -327,13 +328,61 @@ async function seedReports() {
   } catch (e) { console.warn(e); } finally { seedingRep = false; }
 }
 
+/* ---------- set lists of what is in the stores (as given by Muneer, 28/10) ----------
+   Drill Stores: 28/10 handover closing report (titled Rompad, but it is Drill Stores stock) for oils, PPE, GET and
+   fasteners (half-thread and M16 lines are Rompad, so they go to Rompad Stores); the rest from the 20/10 Drill Stores opening list.
+   [id (existing or new), store, cat, name, unit, qty, date, note] */
+const L28 = "2026-10-28", L20 = "2026-10-20", OO = "Other oils & lubricants", RC = "Rockdrill / compressor oil";
+const SET_LIST = [
+  ["oil-hyd", "drill", "", "", "", 3, L28, "reorder"], ["dr-lith", "drill", "Grease", "Lithium complex EP2 grease", "ea", 0, L28, "out of stock"],
+  ["dr-degr", "drill", OO, "Degreaser", "5L", 2, L28, ""], ["oil-eng", "drill", "", "", "", 2, L28, "5 L x2 left"], ["dr-comp68", "drill", RC, "Compressor oil 68", "20L", 5, L28, ""],
+  ["oil-comp", "drill", "", "", "", 1, L28, "10 L left"], ["dr-anti", "drill", OO, "Antifreeze", "5L", 1, L28, ""], ["dr-rd220", "drill", RC, "Rockdrill oil 220", "20L", 2, L28, ""],
+  ["dr-gear", "drill", OO, "Engine gearlube 80W-90", "ea", 4, L28, ""], ["dr-getran", "drill", OO, "Getran gear oil 80W-90", "ea", 3, L28, ""],
+  ["dr-trans", "drill", OO, "Transmission fluid", "ea", 1, L28, ""], ["dr-axle", "drill", OO, "Spirax axle oil", "ea", 2, L28, ""],
+  ["ppe-gloves", "drill", "", "", "", 0, L28, ""], ["ppe-glasses", "drill", "", "", "", 2, L28, ""], ["ppe-resp", "drill", "", "", "", 33, L28, ""], ["dr-earbox", "drill", "PPE", "Ear plugs (box)", "box", 1.5, L28, ""],
+  ["get-bit", "drill", "", "", "", 2, L28, ""], ["get-rod", "drill", "", "", "", 1, L28, ""], ["dr-rodcatch", "drill", "Spares", "Rod catcher", "ea", 3, L28, ""],
+  ["dr-m36x100", "drill", "Fasteners", "M36 x 100 bolts", "ea", 3, L28, ""], ["dr-m20b", "drill", "Fasteners", "M20 bolts", "ea", 4, L28, ""], ["dr-m27n", "drill", "Fasteners", "M27 nuts", "ea", 8, L28, ""],
+  ["rp-m16n", "rompad", "Fasteners", "M16 nuts", "ea", 0, L28, "critical, reorder"], ["rp-m16x200", "rompad", "Fasteners", "M16 x 200 bolts (full thread)", "ea", 6, L28, ""],
+  ["rp-m20x150", "rompad", "Fasteners", "M20 x 150 bolts (half thread)", "ea", 1, L28, ""], ["rp-m24x120", "rompad", "Fasteners", "M24 x 120 bolts (half thread)", "ea", 4, L28, ""],
+  ["rp-m20x140", "rompad", "Fasteners", "M20 x 140 bolts (half thread)", "ea", 4, L28, ""], ["rp-m24x140", "rompad", "Fasteners", "M24 x 140 bolts (half thread)", "ea", 5, L28, ""],
+  ["rp-m20x100", "rompad", "Fasteners", "M20 x 100 bolts (half thread)", "ea", 8, L28, ""],
+  ["ppe-helmet", "drill", "", "", "", 0, L20, ""], ["dr-face", "drill", "PPE", "Face shields", "ea", 2, L20, ""], ["dr-shirt", "drill", "PPE", "Shirts – small", "ea", 12, L20, ""],
+  ["dr-wapron", "drill", "PPE", "Welding apron", "ea", 1, L20, ""], ["dr-wgloves", "drill", "PPE", "Welding gloves", "pr", 1, L20, ""], ["dr-rain", "drill", "PPE", "Rain jackets", "ea", 36, L20, ""],
+  ["dr-127", "drill", "GET", "127 mm bits", "ea", 0, L20, ""], ["dr-102", "drill", "GET", "102 mm bits", "ea", 0, L20, ""],
+  ...[["Clamping collars", 2], ["PTO clamps", 0], ["Gasket seal covers", 2], ["Desikhan packet", 1], ["Soft grippers", 0], ["Threaded pins", 6], ["Companion flanges", 2], ["T-head pin", 3],
+    ["Rod cylinder (0.5 m circ / 2 cm)", 2], ["Roller chains", 3], ["Master-link full link", 9], ["Master-link half link", 9], ["Hydraulic hose", 1], ["Industrial hose", 1], ["Accelerator cable", 1],
+    ["Dust collector tire", 1], ["Hose section SL 90", 1], ["Filters", 13], ["Gasket maker", 2], ["Pin cushion", 4], ["Automotive water pump", 1], ["Pressure gauge", 1], ["EGD controller button", 1],
+    ["Wheel nut indicators", 108], ["Wheel chock set", 1], ["Measuring tape", 7], ["First aid kit", 1], ["Stickers – TKRH022, TKRH023, TKR09", 1, "set"], ["Cord 20 m", 1], ["Fire extinguisher", 4],
+    ["Emergency stop button", 6], ["Rotating light", 2], ["Microphone – DM1 range", 1], ["Solenoid cartridges", 0], ["Moil (rockbreaker tool)", 2], ["500 hr service kit", 1, "kit"], ["250 hr service kit", 1, "kit"], ["Injector", 1]]
+    .map(([n, q, u], i) => ["dr-sp" + i, "drill", "Spares", n, u || "ea", q, L20, ""]),
+  ...[["M16 x 80 bolt", 16], ["M14 nuts & flat washers", 16], ["MIG tip con", 11], ["M10 x 130 bolts", 6], ["Nut hex 10 mm", 50], ["M10 x 70 bolt", 13], ["M8 nuts", 14], ["M16 x 100 bolt", 7],
+    ["M20 nuts & washers", 8], ["M18 x 40 bolt", 10], ["M18 nuts", 10], ["M8 washers", 10], ["Split ring washer", 16], ["Cotter pins", 40], ["M12 x 80 bolt", 3], ["M14 nuts", 26], ["Cotter pins – extra", 39],
+    ["M20 x 150 hex bolt", 10], ["M24 bolt", 3], ["Saddle M24 bolts", 4], ["M16 x 35", 4], ["M14 x 50", 4], ["14 mm grinding cup", 6], ["Cutting disc set (10)", 1, "set"]]
+    .map(([n, q, u], i) => ["dr-fa" + i, "drill", "Fasteners", n, u || "ea", q, L20, ""]),
+];
+async function seedSetList() {
+  const flag = doc(db, "stConfig", "seed-2026-10-28-setlist"); if ((await getDoc(flag)).exists()) return;
+  const cur = (await getDoc(doc(db, "stConfig", "items"))); const list = cur.exists() ? (cur.data().list || []).slice() : DEFAULT_ITEMS.slice();
+  for (const [id, st, cat, name, unit] of SET_LIST) if (cat && !list.some(i => i.id === id)) list.push({ id, store: st, cat, name, unit, ...(cat === "PPE" ? { ppe: "other" } : {}) });
+  await setDoc(doc(db, "stConfig", "items"), { list }, { merge: true });
+  let n = 0;
+  for (const [i, [id, st, , , , qty, date]] of SET_LIST.entries()) { const it = list.find(x => x.id === id);
+    await setDoc(doc(db, "stCounts", `setlist-${st}-${id}`), { store: st, itemId: id, item: it?.name || id, getKey: it?.getKey || "", date, count: qty, byName: "Muneer", byUid: user.uid, src: "setlist", createdAt: Date.parse(date + "T06:00:00+02:00") + i }); n++; }
+  // the 33 dust masks set on Rompad earlier are Drill Stores stock
+  await deleteDoc(doc(db, "stCounts", "fix-2026-10-28-dustmasks")).catch(() => {});
+  // 22/10 "site office to Rompad" lines and 24/10 oils to Simon for TDR013 were Drill Stores moving to the Rompad, so they belong to Drill Stores
+  const S = REPORT_SEEDS.find(x => x.id === "seed-2026-10-22-24-rompad");
+  for (const [i, r] of S.m.entries()) if (r[11].startsWith("Moved from the site office") || r[11] === "To Simon for TDR013") await setDoc(doc(db, "stMoves", `${S.id}-m${i}`), { store: "drill" }, { merge: true });
+  await setDoc(flag, { done: Date.now(), by: email, lines: n }); toast("Store lists loaded: Drill Stores and Rompad Stores");
+}
+
 /* ---------- live data ---------- */
 function startApp() {
   gate.hidden = true; app.hidden = false; $("outBtn").hidden = false;
   $("who").textContent = (me ? me.name + " · store controller" : showName(email) + (isAdmin() ? " · admin" : isSup() ? " · supervisor" : " · manager"));
   const live = (name, set) => subs.push(onSnapshot(collection(db, name), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => { console.warn(e); netNote("Couldn't load everything. Check the signal."); }));
   live("stMoves", v => moves = v); live("stCounts", v => counts = v); live("stReports", v => reports = v);
-  if (boss && isAdmin()) setTimeout(async () => { await seedOctoberGet(); await seedReports(); }, 1500);
+  if (boss && isAdmin()) setTimeout(async () => { await seedOctoberGet(); await seedReports(); try { await seedSetList(); } catch (e) { console.warn(e); } }, 1500);
   subs.push(onSnapshot(doc(db, "stConfig", "items"), s => { itemsSaved = s.exists(); items = itemsSaved ? (s.data().list || []) : DEFAULT_ITEMS.slice(); render(); }, () => {}));
   subs.push(onSnapshot(doc(db, "stConfig", "status"), s => { status = s.exists() ? (s.data().machines || {}) : {}; render(); }, () => {}));
   subs.push(onSnapshot(doc(db, "stConfig", "settings"), s => { if (s.exists()) settings = Object.assign({ supervisor: "" }, s.data()); render(); }, () => {}));
@@ -468,7 +517,7 @@ function dashView() {
       const getC = iss.filter(x => ["BIT", "ROD", "SHANK"].includes(x.getKey) && x.date <= lastM).reduce((n, x) => n + val(x), 0);   // same days as the metres
       return `<div class="tiles">${tile("GET cost per metre", mm ? "R" + (getC / mm).toFixed(2) : "–", mm ? `1 to ${fmt(lastM).slice(0, 5)}: ${R(getC)} bits, rods and shanks ÷ ${String(Math.round(mm * 10) / 10).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} m · standard R39.72/m` : "no metres yet", "dark")}${tile("Metres month to date", mm ? (Math.round(mm * 10) / 10).toFixed(1) + " m" : "–", lastM ? "captured up to " + fmt(lastM) : "add metres in GET Forecast")}</div>`; })() : ""}
   <div class="tiles">${tile("Items issued", iss.length, "lines this month", "dark")}${tile("Value issued", R(value), "items with a price")}${store === "drill" ? tile("GET issued", R(getV), GET_KEYS.map(([k, n]) => { const q = iss.filter(x => x.getKey === k).reduce((a, x) => a + num(x.qty), 0); return q ? q + " " + (q === 1 ? n.slice(0, -1) : n).toLowerCase() : ""; }).filter(Boolean).join(" · ") || "none") : ""}${tile("Received", rec.length, "lines this month")}${tile("Low stock", low.length, low.map(i => esc(i.name)).slice(0, 3).join(", ") || "none")}${(() => { const d = [...duplicates().keys()].map(id => moves.find(x => x.id === id)).filter(x => x && x.store === store && inMonth(x, month)).length; return d ? tile("Possible duplicates", d, "check them on Issue / Receive", "") : ""; })()}</div>
-  <section class="card"><h2>Totals per machine</h2><div class="tbl"><table><thead><tr><th>Machine</th>${OILS.map(o => `<th class="r">${o}${o === "Grease" ? "" : " (20 L)"}</th>`).join("")}<th class="r">Spares items issued</th><th class="r">Value</th><th>Status</th></tr></thead><tbody>
+  <section class="card"><h2>Totals per machine</h2><div class="tbl"><table><thead><tr><th>Machine</th>${OILS.map(o => `<th class="r">${o}${OIL20(o) ? " (20 L)" : ""}</th>`).join("")}<th class="r">Spares items issued</th><th class="r">Value</th><th>Status</th></tr></thead><tbody>
     ${mt.map(r => `<tr><td><b>${r.mc}</b></td>${OILS.map(o => `<td class="num">${nq(r.oils[o]) || ""}</td>`).join("")}<td class="num">${r.spares || ""}</td><td class="num">${r.value ? R(r.value) : ""}</td>
       <td>${canLog() ? `<input data-status="${r.mc}" value="${esc(status[r.mc] || "")}" placeholder="Working" style="min-width:160px">` : esc(status[r.mc] || "")}</td></tr>`).join("")}
     <tr style="font-weight:700"><td>Total</td>${OILS.map(o => `<td class="num">${nq(mt.reduce((n, r) => n + r.oils[o], 0))}</td>`).join("")}<td class="num">${mt.reduce((n, r) => n + r.spares, 0)}</td><td class="num">${R(mt.reduce((n, r) => n + r.value, 0))}</td><td></td></tr>
@@ -617,10 +666,12 @@ const defFor = (st, cat) => OILS.includes(cat) ? "All machines" : cat === "PPE" 
 const lineStatus = (l, it) => { if (l.qty === "" || l.qty == null) return ""; const q = num(l.qty); if (q <= 0) return "Out of stock"; if (it && num(it.min) > 0 && q <= num(it.min)) return "Low"; return "OK"; };
 let sc = null, scPhotos = [], scBusy = false;
 const draftKey = st => "tkr-st-count-" + st;
+// the store's set list: items kept only in this store, plus shared items this store has counted or moved
+const setItems = st => storeItems(st).filter(i => i.store === st || counts.some(c => c.store === st && c.itemId === i.id) || moves.some(m => m.store === st && m.itemId === i.id));
 function newDraft(st) {
   const last = reports.filter(r => r.store === st).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
   const lastBy = new Map((last?.lines || []).map(l => [l.itemId || "t:" + l.item.toLowerCase(), l]));
-  const lines = storeItems(st).map(i => ({ key: i.id, itemId: i.id, cat: i.cat, item: i.name, unit: i.unit || "", for: lastBy.get(i.id)?.for || defFor(st, i.cat), qty: "", note: "" }));
+  const lines = setItems(st).map(i => ({ key: i.id, itemId: i.id, cat: i.cat, item: i.name, unit: i.unit || "", for: lastBy.get(i.id)?.for || defFor(st, i.cat), qty: "", note: "" }));
   (last?.lines || []).filter(l => !l.itemId).forEach(l => lines.push({ key: "t" + Math.random().toString(36).slice(2, 8), itemId: "", cat: l.cat, item: l.item, unit: l.unit || "", for: l.for || defFor(st, l.cat), qty: "", note: "" }));
   const h = new Date().getHours();
   return { store: st, date: today(), shift: h >= 6 && h < 18 ? "Day" : "Night", type: "Closing", supervisor: settings.supervisor || "", reorder: "", notes: "", lines };
@@ -636,6 +687,7 @@ function countView() {
   const forOpts = [...FOR_OPTS[store], ...STORES[store].machines];
   const its = new Map(items.map(i => [i.id, i]));
   const sec = k => sc.lines.filter(l => secOf(l.cat) === k);
+  setItems(store).forEach(i => { if (!sc.lines.some(l => l.itemId === i.id)) sc.lines.push({ key: i.id, itemId: i.id, cat: i.cat, item: i.name, unit: i.unit || "", for: defFor(store, i.cat), qty: "", note: "" }); });
   sc.lines.forEach(l => { const it = its.get(l.itemId); if (it && !l.edited) { const oh = stockOf(store, it).onHand; l.qty = oh > 0 ? String(nq(oh)) : "0"; } });
   const lineRow = l => { const it = its.get(l.itemId), st = lineStatus(l, it), app = it ? stockOf(store, it).onHand : null;
     return `<div class="scline" data-key="${esc(l.key)}">
@@ -845,7 +897,7 @@ async function exportReport(m, ctl, sup) {
   const MC_FILLS = ["FFDCEAF8", "FFDDF0E1", "FFFFEDC7", "FFEADDF5", "FFF9DCDC", "FFD5F0EC", "FFF0E6D2", "FFE3F4D6", "FFFCE2CF", "FFE2E6F0", "FFF7DDEE", "FFD8EEF7", "FFEFF0CF", "FFE8E0D8", "FFDDE3F8", "FFF3E3E3", "FFD9F2E4", "FFF4EBD9", "FFE6DCEF", "FFDFEFEF"];
   const mcList = [...new Set([...STORES.drill.machines, ...STORES.rompad.machines, ...issuesOf(null, m).map(x => x.machine).filter(Boolean).sort()])];
   const mcFill = mc => { const i = mcList.indexOf(mc); return i < 0 ? "FFF2F2F2" : MC_FILLS[i % MC_FILLS.length]; };
-  const OIL_C = { "Hydraulic oil": "FF1F5FA8", "Engine oil": "FF8A4B08", "Grease": "FF5B5B5B", "Rockdrill / compressor oil": "FF2E7D4F" };
+  const OIL_C = { "Hydraulic oil": "FF1F5FA8", "Engine oil": "FF8A4B08", "Grease": "FF5B5B5B", "Rockdrill / compressor oil": "FF2E7D4F", "Other oils & lubricants": "FF6B3FA0" };
   const title = `TKR OPERATIONS – STORES CONSUMPTION REPORT, ${monthName(m).toUpperCase()}`;
   const people = `Stores Controller: ${ctl || ""}   |   Supervisor: ${sup || ""}`;
   function sheet(name, sub, widths) {
@@ -878,11 +930,11 @@ async function exportReport(m, ctl, sup) {
   for (const st of ["drill", "rompad"]) {
     const S = sheet(STORES[st].sheet, STORES[st].sub, [16, 20, 15, 34, 17, 15, 18, 20, 14]);
     heading(S, "Totals per machine");
-    head(S, ["Machine", ...OILS.map(o => o + (o === "Grease" ? "" : " (20 L)")), "Spares items issued", "Value (R)", "Status"], Object.fromEntries(OILS.map((o, k) => [k + 1, OIL_C[o]])));
+    head(S, ["Machine", ...OILS.map(o => o + (OIL20(o) ? " (20 L)" : "")), "Spares items issued", "Value (R)", "Status"], Object.fromEntries(OILS.map((o, k) => [k + 1, OIL_C[o]])));
     const mt = machineTotals(st, m);
     const oilFont = Object.fromEntries(OILS.map((o, k) => [k + 1, OIL_C[o]]));
-    mt.forEach((r, i) => line(S, [r.mc, ...OILS.map(o => r.oils[o]), r.spares, r.value, status[r.mc] || ""], i, { money: [6], mc: r.mc, color: oilFont }));
-    line(S, ["Total", ...OILS.map(o => mt.reduce((n, r) => n + r.oils[o], 0)), mt.reduce((n, r) => n + r.spares, 0), mt.reduce((n, r) => n + r.value, 0), ""], 0, { tot: true, bold: true, money: [6] });
+    mt.forEach((r, i) => line(S, [r.mc, ...OILS.map(o => r.oils[o]), r.spares, r.value, status[r.mc] || ""], i, { money: [OILS.length + 2], mc: r.mc, color: oilFont }));
+    line(S, ["Total", ...OILS.map(o => mt.reduce((n, r) => n + r.oils[o], 0)), mt.reduce((n, r) => n + r.spares, 0), mt.reduce((n, r) => n + r.value, 0), ""], 0, { tot: true, bold: true, money: [OILS.length + 2] });
     S.r++; heading(S, "Everything issued");
     head(S, ["Machine", "Category", "Date", "Item issued", "Qty", "Unit", "Issued to", "Logged by", "Value (R)"]);
     const l = sortD(issuesOf(st, m));
