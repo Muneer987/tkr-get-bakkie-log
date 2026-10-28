@@ -3,7 +3,7 @@
    GET issued and received at the Drill Stores feeds the GET Forecast (stock and cost) automatically. */
 import {
   initializeApp, getAuth, signInAnonymously, sendPasswordResetEmail, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged,
-  initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, addDoc, setDoc, deleteDoc, getDoc, getDocs, onSnapshot,
+  initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, addDoc, setDoc, deleteDoc, getDoc, getDocs, onSnapshot, query, where,
 } from "../lib/firebase.js";
 const showName = e => /@mgr\.tkroperations\.app$/.test(e || "") ? (e[0].toUpperCase() + e.slice(1, e.indexOf("@"))) : e;
 const toLogin = v => { v = String(v || "").trim(); return v.includes("@") ? v : v.toLowerCase().replace(/[^a-z0-9]/g, "") + "@mgr.tkroperations.app"; };  // managers can sign in with a username
@@ -71,7 +71,7 @@ const DEFAULT_ITEMS = [
 
 /* ---------- state ---------- */
 let user = null, email = "", me = null, managers = [], supers = [], staff = [], items = DEFAULT_ITEMS.slice(), itemsSaved = false, moves = [], counts = [], status = {}, settings = { supervisor: "Edwin Khonkhobe" };
-let registering = false, fcMetres = null;
+let registering = false, fcMetres = null, reports = [], renderLater = false;
 let store = lsGet("tkr-st-store") || "drill", tab = lsGet("tkr-st-tab") || "log", month = today().slice(0, 7), ppeStore = "all", subs = [], picked = null, gateMode = "pick", gateMsg = "", form = { out: {}, in: {} };
 const isAdmin = () => ADMINS.includes(email);
 const isSup = () => !!email && supers.includes(email);            // supervisor (Edwin): everything in Stores, like an admin
@@ -332,7 +332,7 @@ function startApp() {
   gate.hidden = true; app.hidden = false; $("outBtn").hidden = false;
   $("who").textContent = (me ? me.name + " · store controller" : showName(email) + (isAdmin() ? " · admin" : isSup() ? " · supervisor" : " · manager"));
   const live = (name, set) => subs.push(onSnapshot(collection(db, name), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => { console.warn(e); netNote("Couldn't load everything. Check the signal."); }));
-  live("stMoves", v => moves = v); live("stCounts", v => counts = v);
+  live("stMoves", v => moves = v); live("stCounts", v => counts = v); live("stReports", v => reports = v);
   if (boss && isAdmin()) setTimeout(async () => { await seedOctoberGet(); await seedReports(); }, 1500);
   subs.push(onSnapshot(doc(db, "stConfig", "items"), s => { itemsSaved = s.exists(); items = itemsSaved ? (s.data().list || []) : DEFAULT_ITEMS.slice(); render(); }, () => {}));
   subs.push(onSnapshot(doc(db, "stConfig", "status"), s => { status = s.exists() ? (s.data().machines || {}) : {}; render(); }, () => {}));
@@ -377,15 +377,17 @@ function machineTotals(st, m) {
 }
 
 /* ---------- rendering ---------- */
-const TABS = [["log", "Issue / Receive"], ["dash", "Dashboard"], ["ppe", "PPE"], ["stock", "Stock"], ["report", "Consumption report"], ["items", "Items & prices"], ["users", "Store controllers"]];
-function render() {
+const TABS = [["log", "Issue / Receive"], ["count", "Stock count"], ["dash", "Dashboard"], ["ppe", "PPE"], ["stock", "Stock"], ["report", "Consumption report"], ["items", "Items & prices"], ["users", "Store controllers"]];
+function render(force) {
   if (app.hidden) return;
+  // don't redraw the stock count while someone is typing in it; it redraws when they leave the box
+  if (!force && tab === "count" && document.activeElement?.closest?.("#countView") && document.activeElement.matches("input:not([type=file]), textarea, select")) { renderLater = true; return; }
   const tabs = TABS.filter(([k]) => (k !== "items" && k !== "users") || isBoss());
   if (!tabs.some(([k]) => k === tab)) tab = tabs[0][0];
   const keep = {}; app.querySelectorAll("form [id]").forEach(el => { if ("value" in el && el.type !== "submit") keep[el.id] = el.value; });
   let h = `<div class="storesw" role="group" aria-label="Store">${Object.entries(STORES).map(([k, s]) => `<button data-store="${k}" aria-pressed="${store === k}">${s.name}</button>`).join("")}</div>
     <div class="tabs" role="tablist">${tabs.map(([k, t]) => `<button role="tab" aria-selected="${tab === k}" data-tab="${k}">${t}</button>`).join("")}</div>`;
-  h += ({ log: logView, dash: dashView, ppe: ppeView, stock: stockView, report: reportView, items: itemsView, users: usersView }[tab])();
+  h += ({ log: logView, count: countView, dash: dashView, ppe: ppeView, stock: stockView, report: reportView, items: itemsView, users: usersView }[tab])();
   app.innerHTML = h;
   Object.entries(keep).forEach(([id, v]) => { const el = document.getElementById(id); if (el && !el.dataset.fresh) el.value = v; });
   syncForms();
@@ -606,6 +608,229 @@ app.addEventListener("submit", async e => {
   ["Qty", "Note", "Other", "Unit", "PriceEach", "To", "From", "Ref", "MachOther"].forEach(k => { const el = $(P + k); if (el) el.value = k === "Qty" ? "1" : ""; });
   if (cat === "GET") form[kind].itemId = ""; render();
 });
+
+/* ---------- stock count (opening / closing handover report), with photos, branded PDF ---------- */
+const FOR_OPTS = { drill: ["Soosan drill rigs", "All machines", "General / store"], rompad: ["Rockbreakers (TKRH)", "All machines", "General / store"] };
+const SECTIONS = [["PPE", "PPE stock"], ["OILS", "Oils & lubricants"], ["GET", "GET spares"], ["Spares", "Spares"], ["Fasteners", "Fasteners, bolts, nuts & washers"], ["Moil locks", "Moil locks"], ["Anything", "Other items"]];
+const secOf = cat => OILS.includes(cat) ? "OILS" : SECTIONS.some(([k]) => k === cat) ? cat : "Anything";
+const defFor = (st, cat) => OILS.includes(cat) ? "All machines" : cat === "PPE" ? "General / store" : FOR_OPTS[st][0];
+const lineStatus = (l, it) => { if (l.qty === "" || l.qty == null) return ""; const q = num(l.qty); if (q <= 0) return "Out of stock"; if (it && num(it.min) > 0 && q <= num(it.min)) return "Low"; return "OK"; };
+let sc = null, scPhotos = [], scBusy = false;
+const draftKey = st => "tkr-st-count-" + st;
+function newDraft(st) {
+  const last = reports.filter(r => r.store === st).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+  const lastBy = new Map((last?.lines || []).map(l => [l.itemId || "t:" + l.item.toLowerCase(), l]));
+  const lines = storeItems(st).map(i => ({ key: i.id, itemId: i.id, cat: i.cat, item: i.name, unit: i.unit || "", for: lastBy.get(i.id)?.for || defFor(st, i.cat), qty: "", note: "" }));
+  (last?.lines || []).filter(l => !l.itemId).forEach(l => lines.push({ key: "t" + Math.random().toString(36).slice(2, 8), itemId: "", cat: l.cat, item: l.item, unit: l.unit || "", for: l.for || defFor(st, l.cat), qty: "", note: "" }));
+  const h = new Date().getHours();
+  return { store: st, date: today(), shift: h >= 6 && h < 18 ? "Day" : "Night", type: "Closing", supervisor: settings.supervisor || "", reorder: "", notes: "", lines };
+}
+function loadDraft() {
+  if (sc && sc.store === store) return;
+  try { const d = JSON.parse(lsGet(draftKey(store)) || "null"); sc = d && d.store === store ? d : newDraft(store); } catch { sc = newDraft(store); }
+  scPhotos = [];
+}
+const saveDraft = () => { if (sc) lsSet(draftKey(sc.store), JSON.stringify(sc)); };
+function countView() {
+  loadDraft();
+  const forOpts = [...FOR_OPTS[store], ...STORES[store].machines];
+  const its = new Map(items.map(i => [i.id, i]));
+  const sec = k => sc.lines.filter(l => secOf(l.cat) === k);
+  const lineRow = l => { const it = its.get(l.itemId), st = lineStatus(l, it), app = it ? stockOf(store, it).onHand : null;
+    return `<div class="scline" data-key="${esc(l.key)}">
+      <div class="nm"><b>${esc(l.item)}</b>${l.unit ? ` <span class="muted">${esc(l.unit)}</span>` : ""}${app !== null && it ? `<span class="muted"> · app shows ${esc(nq(app))}</span>` : ""}${st ? ` <span class="stpill ${st === "OK" ? "ok" : st === "Low" ? "low" : "out"}">${st}</span>` : ""}</div>
+      <label>Counted <input data-sc="qty" inputmode="decimal" value="${esc(l.qty)}" placeholder="Qty"></label>
+      <label>For machine <select data-sc="for">${[...new Set([l.for, ...forOpts])].map(o => opt(o, o, o === l.for)).join("")}</select></label>
+      <label class="wide">Note <input data-sc="note" value="${esc(l.note)}" placeholder="For example 5 L left, reorder"></label>
+      ${l.itemId ? "" : `<button type="button" class="ghost" data-scdel="${esc(l.key)}" aria-label="Remove line">✕</button>`}</div>`; };
+  const issuedToday = moves.filter(x => x.store === store && x.kind === "issue" && x.date === sc.date).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  const autoRe = sc.lines.filter(l => { const st = lineStatus(l, its.get(l.itemId)); return st === "Out of stock" || st === "Low"; });
+  const mine = reports.filter(r => r.store === store).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 15);
+  return `<div id="countView">
+  <section class="card" style="border:2px solid var(--gold)">
+    <h2>Stock count – ${STORES[store].name}</h2>
+    <p class="muted" style="margin-top:0">Count what is in the store at the start or end of the shift. Type the number for each item, choose the machine it is for, add photos, then tap <b>Save stock count</b>. The app makes the TKR report (PDF) from it.</p>
+    <div class="grid">
+      <label>Date <input type="date" data-scf="date" value="${esc(sc.date)}" max="${today()}"></label>
+      <label>Shift <select data-scf="shift">${["Day", "Night"].map(x => opt(x, x, sc.shift === x)).join("")}</select></label>
+      <label>Report <select data-scf="type">${["Opening", "Closing"].map(x => opt(x, x + " stock count", sc.type === x)).join("")}</select></label>
+      <label>Supervisor <input data-scf="supervisor" value="${esc(sc.supervisor)}"></label>
+    </div>
+    <p class="muted" style="margin:10px 0 0">Store controller: <b>${esc(showName(myName()))}</b></p>
+  </section>
+  ${SECTIONS.map(([k, t]) => { const l = sec(k); return `<section class="card"><h2>${esc(t)}</h2>${l.length ? l.map(lineRow).join("") : '<div class="muted">No items here yet. Add one below.</div>'}</section>`; }).join("")}
+  <section class="card">
+    <h2>Add a line</h2>
+    <div class="grid">
+      <label>Section <select id="scNewCat">${SECTIONS.map(([k, t]) => opt(k === "OILS" ? OILS[0] : k, t)).join("")}</select></label>
+      <label>Item <input id="scNewItem" placeholder="For example M16 x 200 bolts"></label>
+      <label>Unit <input id="scNewUnit" placeholder="ea, 20L, box"></label>
+      <div style="display:flex;align-items:flex-end"><button type="button" class="primary" id="scAdd" style="width:100%">Add line</button></div>
+    </div>
+  </section>
+  <section class="card">
+    <h2>Items issued during the shift</h2>
+    ${issuedToday.length ? issuedToday.map(x => `<div class="line"><span class="pill out">Issued</span><div><b>${esc(nq(x.qty))} ${esc(x.unit || "")} × ${esc(x.item)}</b><div class="meta">${[x.machine, x.to && "to " + x.to, x.byName].filter(Boolean).map(esc).join(" · ")}</div></div><span></span></div>`).join("") : `<div class="muted">Nothing issued at ${STORES[store].name} on ${fmt(sc.date)}.</div>`}
+    <p class="muted" style="margin-bottom:0">This comes from Issue / Receive by itself.</p>
+  </section>
+  <section class="card">
+    <h2>Reorder required / stock needed</h2>
+    ${autoRe.length ? `<p style="margin-top:0">${autoRe.map(l => `<span class="stpill ${lineStatus(l, its.get(l.itemId)) === "Low" ? "low" : "out"}">${esc(l.item)}</span>`).join(" ")}</p>` : '<p class="muted" style="margin-top:0">Items counted at 0 or at their minimum show here by themselves.</p>'}
+    <label>Anything else needed <textarea data-scf="reorder" rows="2" placeholder="For example permanent marker, lockout tags">${esc(sc.reorder)}</textarea></label>
+    <label style="margin-top:10px">Stock notes <textarea data-scf="notes" rows="3" placeholder="For example dust masks reduced to 33">${esc(sc.notes)}</textarea></label>
+  </section>
+  <section class="card">
+    <h2>Photos</h2>
+    <p class="muted" style="margin-top:0">Take a photo or upload one, and type a note for each.</p>
+    <div class="row"><label class="primary filebtn">📷 Take photo<input type="file" accept="image/*" capture="environment" data-scphoto="1" hidden></label>
+      <label class="filebtn">🖼️ Upload photo<input type="file" accept="image/*" multiple data-scphoto="1" hidden></label></div>
+    <div class="scphotos">${scPhotos.map((ph, i) => `<div class="scph"><img src="${ph.data}" alt="Photo ${i + 1}"><input data-scpn="${i}" value="${esc(ph.note)}" placeholder="Note for this photo"><button type="button" class="ghost" data-scpdel="${i}">Remove</button></div>`).join("")}</div>
+  </section>
+  <section class="card">
+    <div class="row" style="justify-content:space-between">
+      <button type="button" class="ghost" id="scReset">Start again</button>
+      <button type="button" class="primary" id="scSave" style="flex:1 1 240px;min-height:56px;font-size:18px" ${scBusy ? "disabled" : ""}>${scBusy ? "Saving…" : "Save stock count"}</button>
+    </div>
+    <p class="flag" id="scErr" style="margin:8px 0 0"></p>
+  </section>
+  <section class="card">
+    <h2>Saved stock counts</h2>
+    ${mine.length ? mine.map(r => `<div class="line"><span class="pill in">${esc(r.type || "")}</span><div><b>${fmt(r.date)} · ${esc(r.shift || "")} shift</b><div class="meta">${esc(r.byName || "")} · ${(r.lines || []).length} items counted${r.photoCount ? ` · ${r.photoCount} photo${r.photoCount === 1 ? "" : "s"}` : ""}</div></div>
+      <span class="row" style="gap:6px"><button data-scpdf="${esc(r.id)}">PDF</button>${isBoss() ? `<button class="danger" data-scrm="${esc(r.id)}">Remove</button>` : ""}</span></div>`).join("") : '<div class="muted">No stock counts saved yet.</div>'}
+  </section></div>`;
+}
+const scLine = el => sc.lines.find(l => l.key === el.closest("[data-key]")?.dataset.key);
+app.addEventListener("input", e => {
+  const t = e.target; if (!sc || !t.closest?.("#countView")) return;
+  if (t.dataset.sc) { const l = scLine(t); if (l) { l[t.dataset.sc] = t.value; saveDraft();
+    if (t.dataset.sc === "qty") { const nm = t.closest("[data-key]").querySelector(".nm"), st = lineStatus(l, items.find(i => i.id === l.itemId)); let pl = nm.querySelector(".stpill");
+      if (!st) pl?.remove(); else { if (!pl) { pl = document.createElement("span"); nm.append(" ", pl); } pl.className = "stpill " + (st === "OK" ? "ok" : st === "Low" ? "low" : "out"); pl.textContent = st; } } } return; }
+  if (t.dataset.scf) { sc[t.dataset.scf] = t.value; saveDraft(); return; }
+  if (t.dataset.scpn) { const ph = scPhotos[+t.dataset.scpn]; if (ph) ph.note = t.value; }
+});
+app.addEventListener("focusout", () => { if (renderLater) setTimeout(() => { if (!document.activeElement?.closest?.("#countView") || !document.activeElement.matches("input:not([type=file]), textarea, select")) { renderLater = false; render(); } }, 0); });
+app.addEventListener("change", async e => {
+  const t = e.target; if (!sc || !t.closest?.("#countView")) return;
+  if (t.dataset.scf === "date") render(true);
+  if (t.dataset.scphoto) {
+    for (const f of [...t.files]) { try { scPhotos.push({ data: await shrinkPhoto(f), note: "" }); } catch { toast("That photo couldn't be read."); } }
+    t.value = ""; render(true);
+  }
+});
+function shrinkPhoto(file) {
+  return new Promise((res, rej) => { const u = URL.createObjectURL(file), img = new Image();
+    img.onload = () => { const k = Math.min(1, 1280 / Math.max(img.width, img.height)), c = document.createElement("canvas"); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(u); let q = 0.72, d = c.toDataURL("image/jpeg", q); while (d.length > 700000 && q > 0.35) { q -= 0.1; d = c.toDataURL("image/jpeg", q); } res(d); };
+    img.onerror = () => { URL.revokeObjectURL(u); rej(); }; img.src = u; });
+}
+app.addEventListener("click", async e => {
+  const b = e.target.closest("button"); if (!b || !b.closest("#countView")) return;
+  if (b.dataset.scdel) { sc.lines = sc.lines.filter(l => l.key !== b.dataset.scdel); saveDraft(); render(true); return; }
+  if (b.dataset.scpdel) { scPhotos.splice(+b.dataset.scpdel, 1); render(true); return; }
+  if (b.id === "scAdd") {
+    const cat = $("scNewCat").value, item = $("scNewItem").value.trim(); if (!item) { toast("Type the item name."); return; }
+    sc.lines.push({ key: "t" + Math.random().toString(36).slice(2, 8), itemId: "", cat, item, unit: $("scNewUnit").value.trim(), for: defFor(store, cat), qty: "", note: "" }); saveDraft(); render(); return;
+  }
+  if (b.id === "scReset") { if (confirm("Clear this stock count and start again?")) { sc = newDraft(store); scPhotos = []; saveDraft(); render(true); } return; }
+  if (b.id === "scSave") { await saveCount(); return; }
+  if (b.dataset.scpdf) { const r = reports.find(x => x.id === b.dataset.scpdf); if (r) countPdf(r); return; }
+  if (b.dataset.scrm) { const r = reports.find(x => x.id === b.dataset.scrm); if (r && confirm(`Remove the ${r.type.toLowerCase()} stock count of ${fmt(r.date)}? The stock numbers it set stay.`)) deleteDoc(doc(db, "stReports", r.id)).then(() => toast("Removed")).catch(fail); }
+});
+async function saveCount() {
+  const err = t => { const el = $("scErr"); if (el) el.textContent = t; };
+  if (!canLog()) { if (confirm("Only a store controller can save a stock count.\n\nTap OK to sign in as a store controller with your name and PIN.")) staffSignIn(); return; }
+  const lines = sc.lines.filter(l => String(l.qty).trim() !== "" || l.note.trim());
+  if (!lines.filter(l => String(l.qty).trim() !== "").length) { err("Type the count for at least one item."); return; }
+  if (lines.some(l => String(l.qty).trim() !== "" && isNaN(num(l.qty)))) { err("Counts must be numbers."); return; }
+  const its = new Map(items.map(i => [i.id, i]));
+  scBusy = true; render(true);
+  try {
+    const now = Date.now(), ref = doc(collection(db, "stReports"));
+    const issued = moves.filter(x => x.store === store && x.kind === "issue" && x.date === sc.date).map(x => ({ item: x.item, qty: num(x.qty), unit: x.unit || "", machine: x.machine || "", to: x.to || "" }));
+    const rec = { store, date: sc.date, shift: sc.shift, type: sc.type, supervisor: sc.supervisor.trim(), byName: showName(myName()), byUid: user.uid, createdAt: now, reorder: sc.reorder.trim(), notes: sc.notes.trim(), issued, photoCount: scPhotos.length,
+      lines: lines.map(l => ({ itemId: l.itemId, cat: l.cat, item: l.item, unit: l.unit, for: l.for, qty: String(l.qty).trim() === "" ? "" : num(l.qty), note: l.note.trim(), status: lineStatus(l, its.get(l.itemId)) })) };
+    await Promise.race([setDoc(ref, rec), new Promise(r => setTimeout(r, 4000))]);   // offline: saved on the phone, sent later
+    let i = 0;
+    for (const l of rec.lines) if (l.itemId && l.qty !== "") { const it = its.get(l.itemId);
+      setDoc(doc(db, "stCounts", `${ref.id}-${l.itemId}`), { store, itemId: l.itemId, item: l.item, getKey: it?.getKey || "", date: sc.date, count: l.qty, byName: myName(), byUid: user.uid, src: "stockcount", reportId: ref.id, createdAt: now + i++ }).catch(fail); }
+    scPhotos.forEach((ph, k) => setDoc(doc(db, "stReportPhotos", `${ref.id}-${k}`), { reportId: ref.id, store, n: k, data: ph.data, note: ph.note.trim(), byUid: user.uid, createdAt: now + k }).catch(fail));
+    const keepPh = scPhotos.slice(); sc = newDraft(store); scPhotos = []; saveDraft(); scBusy = false; render(true);
+    toast("Stock count saved. Making the PDF…"); countPdf({ id: ref.id, ...rec }, keepPh);
+  } catch (x) { scBusy = false; render(true); fail(x); }
+}
+async function countPdf(r, photos) {
+  try { await loadLib("../lib/jspdf.umd.min.js"); await loadLib("../lib/jspdf.plugin.autotable.min.js"); } catch { toast("Open the app once with signal, then try again."); return; }
+  if (!photos) { photos = []; try { const s = await getDocs(query(collection(db, "stReportPhotos"), where("reportId", "==", r.id))); photos = s.docs.map(d => d.data()).sort((a, b) => a.n - b.n); } catch (x) { console.warn(x); } }
+  const { jsPDF } = window.jspdf, P = new jsPDF({ unit: "mm", format: "a4" }), W = 210, M = 12;
+  const GOLD = [212, 161, 42], BLACK = [17, 17, 17], MUTED = [107, 101, 88];
+  let logo = null; try { const bl = await (await fetch("../icons/icon-192.png")).blob(); logo = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(bl); }); } catch {}
+  const title = `${STORES[r.store].name.toUpperCase()}`, sub = `${(r.shift || "").toUpperCase()} SHIFT ${String(r.type || "").toUpperCase()} STOCK COUNT`;
+  const band = () => { P.setFillColor(...BLACK); P.rect(0, 0, W, 30, "F"); P.setFillColor(...GOLD); P.rect(0, 30, W, 1.6, "F");
+    if (logo) P.addImage(logo, "PNG", M, 5, 20, 20);
+    P.setTextColor(255, 255, 255); P.setFont("helvetica", "bold"); P.setFontSize(16); P.text("TKR OPERATIONS · " + title, M + 25, 14);
+    P.setTextColor(...GOLD); P.setFontSize(9.5); P.text(sub, M + 25, 21);
+    P.setDrawColor(...GOLD); P.setLineWidth(0.5); P.roundedRect(W - M - 38, 10, 38, 10, 2, 2); P.setFontSize(8.5); P.text((r.type || "").toUpperCase() + " REPORT", W - M - 19, 16.3, { align: "center" }); };
+  band();
+  let y = 38;
+  const info = [["DATE", fmt(r.date)], ["SHIFT", r.shift || ""], ["STORES CONTROLLER", r.byName || ""], ["SUPERVISOR", r.supervisor || ""]];
+  P.setDrawColor(217, 211, 197); P.setFillColor(247, 244, 236); P.roundedRect(M, y, W - 2 * M, 16, 2, 2, "FD");
+  info.forEach(([l, v], i) => { const x = M + 5 + i * ((W - 2 * M) / 4); P.setTextColor(...MUTED); P.setFont("helvetica", "bold"); P.setFontSize(7); P.text(l, x, y + 6); P.setTextColor(...BLACK); P.setFontSize(10.5); P.text(P.splitTextToSize(String(v), (W - 2 * M) / 4 - 7)[0] || "", x, y + 12); });
+  y += 22;
+  const re = (r.lines || []).filter(l => l.status === "Out of stock" || l.status === "Low").map(l => l.item + (l.status === "Out of stock" ? " (out of stock)" : " (low)"));
+  if (r.reorder) re.push(...r.reorder.split(/\n|,/).map(x => x.trim()).filter(Boolean));
+  if (re.length) { const txt = P.splitTextToSize(re.join(" • "), W - 2 * M - 10), h = 10 + txt.length * 4.6;
+    P.setFillColor(253, 236, 234); P.setDrawColor(179, 64, 47); P.roundedRect(M, y, W - 2 * M, h, 2, 2, "FD");
+    P.setTextColor(179, 64, 47); P.setFont("helvetica", "bold"); P.setFontSize(9.5); P.text("REORDER REQUIRED / STOCK NEEDED", M + 5, y + 6);
+    P.setFont("helvetica", "normal"); P.setFontSize(9); P.setTextColor(...BLACK); P.text(txt, M + 5, y + 11.5); y += h + 6; }
+  const stCol = s => s === "Out of stock" ? [179, 64, 47] : s === "Low" ? [184, 134, 11] : s === "OK" ? [46, 125, 79] : MUTED;
+  for (const [k, t] of SECTIONS) {
+    const l = (r.lines || []).filter(x => secOf(x.cat) === k); if (!l.length) continue;
+    if (y > 260) { P.addPage(); band(); y = 38; }
+    P.setTextColor(...BLACK); P.setFont("helvetica", "bold"); P.setFontSize(11); P.text(t.toUpperCase(), M, y); y += 2;
+    P.autoTable({ startY: y, margin: { left: M, right: M, top: 38 }, theme: "grid",
+      head: [["Item", "For machine", "Qty", "Unit", "Status", "Note"]],
+      body: l.map(x => [x.item, x.for || "", x.qty === "" ? "" : nq(x.qty), x.unit || "", x.status || "", x.note || ""]),
+      styles: { font: "helvetica", fontSize: 8.6, cellPadding: 2, lineColor: [217, 211, 197], lineWidth: 0.2, textColor: BLACK },
+      headStyles: { fillColor: BLACK, textColor: GOLD, fontStyle: "bold" }, alternateRowStyles: { fillColor: [255, 255, 255] },
+      columnStyles: { 0: { cellWidth: 50, fontStyle: "bold" }, 1: { cellWidth: 36 }, 2: { cellWidth: 14, halign: "center" }, 3: { cellWidth: 14 }, 4: { cellWidth: 24 } },
+      didParseCell: d => { if (d.section === "body" && d.column.index === 4) { d.cell.styles.textColor = stCol(d.cell.raw); d.cell.styles.fontStyle = "bold"; } },
+      didDrawPage: () => band() });
+    y = P.lastAutoTable.finalY + 8;
+  }
+  if (y > 250) { P.addPage(); band(); y = 38; }
+  P.setTextColor(...BLACK); P.setFont("helvetica", "bold"); P.setFontSize(11); P.text("ITEMS ISSUED DURING THE SHIFT", M, y); y += 2;
+  P.autoTable({ startY: y, margin: { left: M, right: M, top: 38 }, theme: "grid", head: [["Item", "Qty", "Unit", "Machine", "Issued to"]],
+    body: (r.issued || []).length ? r.issued.map(x => [x.item, nq(x.qty), x.unit, x.machine, x.to]) : [["Nothing issued on " + fmt(r.date), "", "", "", ""]],
+    styles: { font: "helvetica", fontSize: 8.6, cellPadding: 2, lineColor: [217, 211, 197], lineWidth: 0.2, textColor: BLACK }, headStyles: { fillColor: BLACK, textColor: GOLD }, didDrawPage: () => band() });
+  y = P.lastAutoTable.finalY + 8;
+  if (r.notes) { const txt = P.splitTextToSize(r.notes, W - 2 * M - 10), h = 10 + txt.length * 4.6; if (y + h > 280) { P.addPage(); band(); y = 38; }
+    P.setFillColor(247, 244, 236); P.setDrawColor(...GOLD); P.roundedRect(M, y, W - 2 * M, h, 2, 2, "FD"); P.setFont("helvetica", "bold"); P.setFontSize(9.5); P.setTextColor(...BLACK); P.text("STOCK NOTES", M + 5, y + 6);
+    P.setFont("helvetica", "normal"); P.setFontSize(9); P.text(txt, M + 5, y + 11.5); y += h + 6; }
+  if (photos.length) {
+    if (y > 200) { P.addPage(); band(); y = 38; }
+    P.setFont("helvetica", "bold"); P.setFontSize(11); P.setTextColor(...BLACK); P.text("PHOTOS", M, y); y += 4;
+    const cw = (W - 2 * M - 6) / 2; let col = 0;
+    for (const ph of photos) {
+      const img = await new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = ph.data; }); if (!img) continue;
+      const h = Math.min(70, cw * img.height / img.width), w = h * img.width / img.height, note = P.splitTextToSize(ph.note || "", cw), boxH = h + 4 + note.length * 4.2;
+      if (y + boxH > 284) { P.addPage(); band(); y = 38; col = 0; }
+      const x = M + col * (cw + 6); P.addImage(ph.data, "JPEG", x + (cw - w) / 2, y, w, h);
+      P.setFont("helvetica", "normal"); P.setFontSize(8.5); P.setTextColor(...MUTED); if (note.length) P.text(note, x, y + h + 4);
+      if (col === 1) { y += boxH + 6; col = 0; } else { col = 1; P.__rowH = boxH; }
+    }
+    if (col === 1) y += (P.__rowH || 80) + 6;
+  }
+  if (y > 250) { P.addPage(); band(); y = 38; }
+  P.setFont("helvetica", "bold"); P.setFontSize(11); P.setTextColor(...BLACK); P.text("HANDOVER SIGN-OFF", M, y); y += 8;
+  [["Stores controller", r.byName || ""], ["Supervisor", r.supervisor || ""]].forEach(([l, v], i) => { const x = M + i * ((W - 2 * M) / 2);
+    P.setFont("helvetica", "bold"); P.setFontSize(9); P.setTextColor(...MUTED); P.text(l.toUpperCase(), x, y); P.setTextColor(...BLACK); P.setFont("helvetica", "normal"); P.setFontSize(10);
+    P.text("Name: " + v, x, y + 7); P.text("Signature: ______________________", x, y + 15); });
+  const n = P.getNumberOfPages();
+  for (let i = 1; i <= n; i++) { P.setPage(i); P.setFont("helvetica", "normal"); P.setFontSize(8); P.setTextColor(...MUTED);
+    P.text(`TKR Operations · ${STORES[r.store].name} ${String(r.type || "").toLowerCase()} stock count · ${fmt(r.date)} ${r.shift || ""} shift`, M, 292); P.text(`Page ${i} of ${n}`, W - M, 292, { align: "right" }); }
+  const name = `TKR_${STORES[r.store].name.replace(/ /g, "_")}_${r.type}_Stock_Count_${fmt(r.date).replace(/\//g, "-")}_${r.shift || ""}.pdf`;
+  const { deliver } = await import("../lib/deliver.js"); deliver(P.output("blob"), name);
+}
 
 /* ---------- branded consumption report (ExcelJS, TKR logo, black and gold) ---------- */
 async function exportReport(m, ctl, sup) {

@@ -1,5 +1,5 @@
 rules_version = '2';
-// TKR Operations app – rules updated 28 Oct 2026 (supervisor added)
+// TKR Operations app – rules updated 28 Oct 2026 (supervisor, stock counts)
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -110,6 +110,16 @@ service cloud.firestore {
       allow delete: if sectionBoss() || (stStaff() && resource.data.byUid == request.auth.uid);
     }
     match /stCounts/{id} {
+      allow read: if stReader();
+      allow create: if (stStaff() || sectionBoss()) && request.resource.data.byUid == request.auth.uid;
+      allow update, delete: if sectionBoss();
+    }
+    match /stReports/{id} {
+      allow read: if stReader();
+      allow create: if (stStaff() || sectionBoss()) && request.resource.data.byUid == request.auth.uid;
+      allow update, delete: if sectionBoss();
+    }
+    match /stReportPhotos/{id} {
       allow read: if stReader();
       allow create: if (stStaff() || sectionBoss()) && request.resource.data.byUid == request.auth.uid;
       allow update, delete: if sectionBoss();
