@@ -41,7 +41,7 @@ const lsGet = k => { try { return localStorage.getItem(k); } catch { return null
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 
 /* ---------- what the stores hold ---------- */
-const STORES = { drill: { name: "Drill Stores", sheet: "TDR Drill Rigs", sub: "Drill rigs (TDR)", machines: ["TDR013", "TDR014", "TDR015", "TDR016", "TDR017"] },
+const STORES = { drill: { name: "Drill Stores", sheet: "TDR Drill Rigs", sub: "Drill rigs (TDR)", machines: ["TDR013", "TDR014", "TDR015"] },
   rompad: { name: "Rompad Stores", sheet: "Rompad Rockbreakers", sub: "Rockbreakers (TKRH) – Rompad", machines: ["TKRH011", "TKRH012", "TKRH015", "TKRH016", "TKRH017", "TKRH019", "TKRH020", "TKRH021"] } };
 const OILS = ["Hydraulic oil", "Engine oil", "Grease", "Rockdrill / compressor oil"];
 const CATS = { drill: ["GET", ...OILS, "Spares", "PPE"], rompad: [...OILS, "Moil locks", "Spares", "PPE"] };
@@ -636,6 +636,7 @@ function countView() {
   const forOpts = [...FOR_OPTS[store], ...STORES[store].machines];
   const its = new Map(items.map(i => [i.id, i]));
   const sec = k => sc.lines.filter(l => secOf(l.cat) === k);
+  sc.lines.forEach(l => { const it = its.get(l.itemId); if (it && !l.edited) { const oh = stockOf(store, it).onHand; l.qty = oh > 0 ? String(nq(oh)) : "0"; } });
   const lineRow = l => { const it = its.get(l.itemId), st = lineStatus(l, it), app = it ? stockOf(store, it).onHand : null;
     return `<div class="scline" data-key="${esc(l.key)}">
       <div class="nm"><b>${esc(l.item)}</b>${l.unit ? ` <span class="muted">${esc(l.unit)}</span>` : ""}${app !== null && it ? `<span class="muted"> · app shows ${esc(nq(app))}</span>` : ""}${st ? ` <span class="stpill ${st === "OK" ? "ok" : st === "Low" ? "low" : "out"}">${st}</span>` : ""}</div>
@@ -649,7 +650,7 @@ function countView() {
   return `<div id="countView">
   <section class="card" style="border:2px solid var(--gold)">
     <h2>Stock count – ${STORES[store].name}</h2>
-    <p class="muted" style="margin-top:0">Count what is in the store at the start or end of the shift. Type the number for each item, choose the machine it is for, add photos, then tap <b>Save stock count</b>. The app makes the TKR report (PDF) from it.</p>
+    <p class="muted" style="margin-top:0">The numbers fill in by themselves from Issue / Receive. Check them against the shelf, change any that are wrong, add photos, then tap <b>Save and download PDF</b>.</p>
     <div class="grid">
       <label>Date <input type="date" data-scf="date" value="${esc(sc.date)}" max="${today()}"></label>
       <label>Shift <select data-scf="shift">${["Day", "Night"].map(x => opt(x, x, sc.shift === x)).join("")}</select></label>
@@ -702,7 +703,7 @@ function countView() {
 const scLine = el => sc.lines.find(l => l.key === el.closest("[data-key]")?.dataset.key);
 app.addEventListener("input", e => {
   const t = e.target; if (!sc || !t.closest?.("#countView")) return;
-  if (t.dataset.sc) { const l = scLine(t); if (l) { l[t.dataset.sc] = t.value; saveDraft();
+  if (t.dataset.sc) { const l = scLine(t); if (l) { l[t.dataset.sc] = t.value; if (t.dataset.sc === "qty") l.edited = true; saveDraft();
     if (t.dataset.sc === "qty") { const nm = t.closest("[data-key]").querySelector(".nm"), st = lineStatus(l, items.find(i => i.id === l.itemId)); let pl = nm.querySelector(".stpill");
       if (!st) pl?.remove(); else { if (!pl) { pl = document.createElement("span"); nm.append(" ", pl); } pl.className = "stpill " + (st === "OK" ? "ok" : st === "Low" ? "low" : "out"); pl.textContent = st; } } } return; }
   if (t.dataset.scf) { sc[t.dataset.scf] = t.value; saveDraft(); return; }
