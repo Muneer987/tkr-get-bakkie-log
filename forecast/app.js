@@ -68,7 +68,7 @@ onAuthStateChanged(auth, u => {
 });
 function showGate(msg = "", html = false) { $("gate").hidden = false; app.hidden = true; $("signBtn").hidden = true; $("who").textContent = ""; if (html) $("sErr").innerHTML = msg; else $("sErr").textContent = msg; $("signForm").querySelectorAll("label, button, p.muted").forEach(el => el.hidden = html); }
 function gateOrApp() {
-  if (!isManager()) { showGate(`<span style="color:var(--fg);font-weight:500">Sorry ${esc(showName(email))}, the GET Forecast is only open to admins and managers.${email.endsWith("@mgr.tkroperations.app") ? ` Your sign-in works in <a href="../stores/">Stores</a> and the <a href="../get/">GET Bakkie Log</a>.` : " If you need it, please ask admin."}</span>`, true); return; }
+  if (!isManager()) { showGate(`<span style="color:var(--fg);font-weight:500">Sorry ${esc(showName(email))}, you don't have access here. Please ask admin.</span>`, true); return; }
   $("gate").hidden = true; app.hidden = false; $("signBtn").hidden = false; $("who").textContent = showName(email) + (isAdmin() ? " · admin" : " · manager");
   if (subs.length === 1) {
     const live = (name, set) => subs.push(onSnapshot(collection(db, name), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => netNote("Couldn't load. Check the signal.")));

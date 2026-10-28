@@ -685,7 +685,7 @@ onAuthStateChanged(auth,u=>{if(rolesUnsub){rolesUnsub();rolesUnsub=null}
   getDoc(doc(fs,"config","roles")).catch(()=>null).then(r=>{mgrs=r&&r.exists()?(r.data().managers||[]).map(x=>String(x).toLowerCase()):[];
   if(email!==(u.email||"").toLowerCase())return;
   rolesUnsub=onSnapshot(doc(fs,"config","attendance"),d=>{const v=d.exists()?d.data():{};roles={capturers:(v.capturers||[]).map(x=>x.toLowerCase()),viewers:(v.viewers||[]).map(x=>x.toLowerCase())};
-    if(!canView()){q("appBar").hidden=true;q("tabs").hidden=true;const nm=/@mgr\.tkroperations\.app$/.test(email)?email[0].toUpperCase()+email.slice(1,email.indexOf("@")):email.replace(/[<>&]/g,"");q("main").innerHTML='<div class="empty"><b>Sorry '+nm+'</b>TKR Attendance is only open to admins, managers and the attendance team.'+(/@mgr\.tkroperations\.app$/.test(email)?' Your sign-in works in <a href="../stores/">Stores</a> and the <a href="../get/">GET Bakkie Log</a>.':' If you need it, please ask admin.')+'</div>';return}
+    if(!canView()){q("appBar").hidden=true;q("tabs").hidden=true;const nm=/@mgr\.tkroperations\.app$/.test(email)?email[0].toUpperCase()+email.slice(1,email.indexOf("@")):email.replace(/[<>&]/g,"");q("main").innerHTML='<div class="empty"><b>Sorry '+nm+'</b>You don\'t have access here. Please ask admin.</div>';return}
     q("appBar").hidden=false;q("tabs").hidden=false;startApp(fdb);rerender()},
     e=>{q("main").innerHTML='<div class="empty"><b>The register could not load</b>'+String(e&&e.message||"Check your signal and open the app again.").replace(/[<>&]/g,"")+'</div>'})})});
 q("signForm").onsubmit=async e=>{e.preventDefault();const m=q("sMsg");m.textContent="Signing in…";q("sBtn").disabled=true;
