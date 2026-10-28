@@ -689,7 +689,7 @@ function countView() {
   <section class="card">
     <div class="row" style="justify-content:space-between">
       <button type="button" class="ghost" id="scReset">Start again</button>
-      <button type="button" class="primary" id="scSave" style="flex:1 1 240px;min-height:56px;font-size:18px" ${scBusy ? "disabled" : ""}>${scBusy ? "Saving…" : "Save stock count"}</button>
+      <button type="button" class="primary" id="scSave" style="flex:1 1 240px;min-height:56px;font-size:18px" ${scBusy ? "disabled" : ""}>${scBusy ? "Saving…" : "Save and download PDF"}</button>
     </div>
     <p class="flag" id="scErr" style="margin:8px 0 0"></p>
   </section>
