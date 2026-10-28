@@ -5,6 +5,8 @@ import {
   initializeApp, getAuth, signInAnonymously, sendPasswordResetEmail, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged,
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, addDoc, setDoc, deleteDoc, getDoc, getDocs, onSnapshot,
 } from "../lib/firebase.js";
+const showName = e => /@mgr\.tkroperations\.app$/.test(e || "") ? (e[0].toUpperCase() + e.slice(1, e.indexOf("@"))) : e;
+const toLogin = v => { v = String(v || "").trim(); return v.includes("@") ? v : v.toLowerCase().replace(/[^a-z0-9]/g, "") + "@mgr.tkroperations.app"; };  // managers can sign in with a username
 
 const firebaseConfig = {
   apiKey: "AIzaSyALzOBLObrONGVD1bS0Tz02aNKhQ40TRoI", authDomain: "tkr-operations-app.firebaseapp.com", projectId: "tkr-operations-app",
@@ -139,7 +141,7 @@ function showGate(mode, msg = "") {
       <div class="row"><button class="primary" id="gCheck">Check again</button><button class="ghost" id="gBack">Back</button></div>`;
   } else if (mode === "admin") {
     h = `<form id="gForm" style="display:flex;flex-direction:column;gap:12px" autocomplete="on"><h2>Admin or manager sign in</h2>
-      <label>Email <input id="gEmail" type="email" autocomplete="username" required></label><label>Password <input id="gPass" type="password" autocomplete="current-password" required></label>${err}
+      <label>Username or email <input id="gEmail" type="text" autocapitalize="none" autocomplete="username" required></label><label>Password <input id="gPass" type="password" autocomplete="current-password" required></label>${err}
       <button class="primary">Sign in</button><button type="button" class="ghost" id="gForgot">Forgot your password?</button><button type="button" class="ghost" id="gBack">Back</button></form>`;
   }
   gate.innerHTML = h; setTimeout(() => gate.querySelector("input")?.focus(), 50);
@@ -158,7 +160,7 @@ gate.addEventListener("submit", async e => {
   e.preventDefault(); const err = t => { const el = $("gErr"); if (el) el.textContent = t; };
   if (gateMode === "admin") {
     err("Signing in…");
-    try { const cred = await signInWithEmailAndPassword(mainAuth, $("gEmail").value.trim(), $("gPass").value);
+    try { const cred = await signInWithEmailAndPassword(mainAuth, toLogin($("gEmail").value), $("gPass").value);
       if (await bossCheck(cred.user)) { if (!stAuth.currentUser?.isAnonymous && stAuth.currentUser) await signOut(stAuth); await useBoss(cred.user); onAuthStateChanged(mainAuth, x => { if (boss && !x) location.reload(); }); }
       else { await signOut(mainAuth); err("This email is not an admin or manager. Ask admin."); } }
     catch (x) { err(String(x?.code || "").includes("network") ? "No signal. Signing in needs signal." : "Email or password is wrong."); }
@@ -324,7 +326,7 @@ async function seedReports() {
 /* ---------- live data ---------- */
 function startApp() {
   gate.hidden = true; app.hidden = false; $("outBtn").hidden = false;
-  $("who").textContent = (me ? me.name + " · store controller" : email + (isAdmin() ? " · admin" : " · manager"));
+  $("who").textContent = (me ? me.name + " · store controller" : showName(email) + (isAdmin() ? " · admin" : " · manager"));
   const live = (name, set) => subs.push(onSnapshot(collection(db, name), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => { console.warn(e); netNote("Couldn't load everything. Check the signal."); }));
   live("stMoves", v => moves = v); live("stCounts", v => counts = v);
   if (boss && isAdmin()) setTimeout(async () => { await seedOctoberGet(); await seedReports(); }, 1500);

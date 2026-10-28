@@ -65,7 +65,7 @@
         <h3>Managers who can download</h3>
         <p class="muted" style="margin-top:0">Muneer and Amogelang are app admins. Add a manager here with their email and a password. They sign in with "Manager sign in".</p>
         <form id="addMgr" class="grid2">
-          <input id="mgrEmail" type="email" placeholder="Manager email" autocomplete="off">
+          <input id="mgrEmail" type="text" autocapitalize="none" placeholder="Manager username (e.g. Eddie) or email" autocomplete="off">
           <input id="mgrPass" type="text" placeholder="Password (6+ characters)" autocomplete="off">
           <button class="primary">Add manager</button>
         </form>
@@ -108,7 +108,7 @@
 <div id="signDlg" class="viewer" hidden>
   <form id="signForm" class="card dlg">
     <h2>Manager sign in</h2>
-    <label>Email <input id="sEmail" type="email" autocomplete="username" required></label>
+    <label>Username or email <input id="sEmail" type="text" autocapitalize="none" autocomplete="username" required></label>
     <label>Password <input id="sPass" type="password" autocomplete="current-password" required></label>
     <p class="flag" id="sErr"></p>
     <div class="row" style="justify-content:flex-end"><button type="button" id="sCancel" class="ghost">Cancel</button><button class="primary">Sign in</button></div>

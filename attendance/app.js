@@ -2,6 +2,7 @@
    Data is shared through Firebase (project tkr-operations-app). Marks made with no signal stay on the device and are sent when the signal is back. */
 import {initializeApp,deleteApp,getAuth,signInWithEmailAndPassword,signOut,onAuthStateChanged,createUserWithEmailAndPassword,sendPasswordResetEmail,
   initializeFirestore,persistentLocalCache,persistentMultipleTabManager,collection,doc,setDoc,getDoc,getDocs,onSnapshot,arrayUnion,arrayRemove} from "../lib/firebase.js";
+const toLogin = v => { v = String(v || "").trim(); return v.includes("@") ? v : v.toLowerCase().replace(/[^a-z0-9]/g, "") + "@mgr.tkroperations.app"; };  // managers can sign in with a username
 const firebaseConfig={apiKey:"AIzaSyALzOBLObrONGVD1bS0Tz02aNKhQ40TRoI",authDomain:"tkr-operations-app.firebaseapp.com",projectId:"tkr-operations-app",
   storageBucket:"tkr-operations-app.firebasestorage.app",messagingSenderId:"158080247079",appId:"1:158080247079:web:7cb7786d2b7f9ee172b502"};
 // Must match the Firestore rules (firestore-rules.txt).
@@ -688,7 +689,7 @@ onAuthStateChanged(auth,u=>{if(rolesUnsub){rolesUnsub();rolesUnsub=null}
     q("appBar").hidden=false;q("tabs").hidden=false;startApp(fdb);rerender()},
     e=>{q("main").innerHTML='<div class="empty"><b>The register could not load</b>'+String(e&&e.message||"Check your signal and open the app again.").replace(/[<>&]/g,"")+'</div>'})})});
 q("signForm").onsubmit=async e=>{e.preventDefault();const m=q("sMsg");m.textContent="Signing in…";q("sBtn").disabled=true;
-  try{await signInWithEmailAndPassword(auth,q("sEmail").value.trim(),q("sPass").value);q("sPass").value="";m.textContent=""}
+  try{await signInWithEmailAndPassword(auth,toLogin(q("sEmail").value),q("sPass").value);q("sPass").value="";m.textContent=""}
   catch(err){m.textContent=err&&err.code==="auth/network-request-failed"?"No signal. Sign in once with signal; after that the app works offline.":"The email or password is wrong."}
   q("sBtn").disabled=false};
 q("forgot").onclick=async()=>{const em=q("sEmail").value.trim();const m=q("sMsg");if(!em.includes("@")){m.textContent="Type your email first, then tap Forgot password.";return}

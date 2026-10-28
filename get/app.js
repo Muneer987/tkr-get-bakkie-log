@@ -1,4 +1,5 @@
 "use strict";
+const toLogin = v => { v = String(v || "").trim(); return v.includes("@") ? v : v.toLowerCase().replace(/[^a-z0-9]/g, "") + "@mgr.tkroperations.app"; };  // managers can sign in with a username
 const loadLib = src => new Promise((res, rej) => { if (document.querySelector(`script[src="${src}"]`)?.dataset.ok) return res(); const s = document.createElement("script"); s.src = src; s.onload = () => { s.dataset.ok = 1; res(); }; s.onerror = rej; document.head.appendChild(s); });
 /* TKR GET Bakkie Log — offline app. Everything is saved on this device (IndexedDB).
    Excel export makes the sum-up; the backup file moves the records to a new device. */
@@ -566,7 +567,7 @@ function exportGate() {
       <button id="adminExport">Admin: sign in to export</button>
     </div>
     ${showAdminExport ? `<form id="adminExportForm" class="grid" style="margin-top:12px" autocomplete="off">
-      <label>Admin email <input id="aeEmail" type="email" autocomplete="username"></label>
+      <label>Admin username or email <input id="aeEmail" type="text" autocapitalize="none" autocomplete="username"></label>
       <label>Password <input id="aePass" type="password" autocomplete="current-password"></label>
       <div style="display:flex;align-items:flex-end"><button class="primary" style="width:100%">Sign in</button></div></form>` : ""}
     <p class="flag" id="exportErr">${esc(exportMsg)}</p>
@@ -729,7 +730,7 @@ app.addEventListener("submit", async e => {
     try {
       await firebase();
       const tmp = fb.initializeApp(FIREBASE_CONFIG, "get-admin-" + Date.now()), a = fb.getAuth(tmp);
-      const cred = await fb.signInWithEmailAndPassword(a, $("#aeEmail").value.trim(), $("#aePass").value);
+      const cred = await fb.signInWithEmailAndPassword(a, toLogin($("#aeEmail").value), $("#aePass").value);
       const em = (cred.user.email || "").toLowerCase();
       if (!["muneer@tkroperations.com", "amogelang@tkroperations.com"].includes(em)) { await fb.signOut(a).catch(() => {}); fb.deleteApp(tmp).catch(() => {}); exportMsg = "Only an admin can export."; render(); return; }
       exportPass = { by: em, until: Date.now() + 15 * 60e3, db: fb.initializeFirestore(tmp, {}) }; exportMsg = ""; showAdminExport = false; render();
@@ -927,7 +928,7 @@ function lockView(mode, msg = "") {
   } else if (mode === "admin") {
     const sa = adminNow;
     el.innerHTML = `<h2>Combined report</h2><p class="muted" style="margin:0">${sa ? `Signed in as ${esc(sa.email)}. Choose the dates and download one Excel report for all GET operators.` : "Admin: sign in, choose the dates and download one Excel report for all GET operators. Needs signal."}</p>
-      ${sa ? "" : `<label>Admin email <input id="laEmail" type="email" autocomplete="username"></label><label>Password <input id="laPass" type="password" autocomplete="current-password"></label>`}
+      ${sa ? "" : `<label>Admin username or email <input id="laEmail" type="text" autocapitalize="none" autocomplete="username"></label><label>Password <input id="laPass" type="password" autocomplete="current-password"></label>`}
       <div class="row"><label style="flex:1">From <input type="date" id="laFrom" value="${range.from}"></label><label style="flex:1">To <input type="date" id="laTo" value="${range.to}"></label></div>
       ${err}<button class="primary" id="laGo">Download combined report</button><button type="button" class="ghost" id="lSwitch">Back</button>`;
   } else if (mode === "forgot") {
@@ -973,7 +974,7 @@ $("#lockForm").addEventListener("submit", async e => {
       if (adminNow) { em = adminNow.email; adb = adminNow.db; }
       else {
         tmp = fb.initializeApp(FIREBASE_CONFIG, "get-admin-" + Date.now()); const a = fb.getAuth(tmp);
-        const cred = await fb.signInWithEmailAndPassword(a, $("#laEmail").value.trim(), $("#laPass").value);
+        const cred = await fb.signInWithEmailAndPassword(a, toLogin($("#laEmail").value), $("#laPass").value);
         em = (cred.user.email || "").toLowerCase(); adb = fb.initializeFirestore(tmp, {});
         if (!["muneer@tkroperations.com", "amogelang@tkroperations.com"].includes(em)) { err().textContent = "Only an admin can do this."; return; }
       }

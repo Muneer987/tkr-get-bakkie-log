@@ -5,6 +5,8 @@ import {
   initializeApp, getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail,
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, addDoc, setDoc, deleteDoc, getDoc, onSnapshot, query, where,
 } from "../lib/firebase.js";
+const showName = e => /@mgr\.tkroperations\.app$/.test(e || "") ? (e[0].toUpperCase() + e.slice(1, e.indexOf("@"))) : e;
+const toLogin = v => { v = String(v || "").trim(); return v.includes("@") ? v : v.toLowerCase().replace(/[^a-z0-9]/g, "") + "@mgr.tkroperations.app"; };  // managers can sign in with a username
 
 const firebaseConfig = {
   apiKey: "AIzaSyALzOBLObrONGVD1bS0Tz02aNKhQ40TRoI", authDomain: "tkr-operations-app.firebaseapp.com", projectId: "tkr-operations-app",
@@ -67,7 +69,7 @@ onAuthStateChanged(auth, u => {
 function showGate(msg = "") { $("gate").hidden = false; app.hidden = true; $("signBtn").hidden = true; $("who").textContent = ""; $("sErr").textContent = msg; }
 function gateOrApp() {
   if (!isManager()) { showGate("This sign-in is not an admin or manager. Ask admin."); return; }
-  $("gate").hidden = true; app.hidden = false; $("signBtn").hidden = false; $("who").textContent = email + (isAdmin() ? " · admin" : " · manager");
+  $("gate").hidden = true; app.hidden = false; $("signBtn").hidden = false; $("who").textContent = showName(email) + (isAdmin() ? " · admin" : " · manager");
   if (subs.length === 1) {
     const live = (name, set) => subs.push(onSnapshot(collection(db, name), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => netNote("Couldn't load. Check the signal.")));
     live("fcMetres", v => { metres = v; if (isAdmin()) setTimeout(async () => { await seedOctober(); await seedLate(); await seedSite5200(); }, 1500); }); live("fcIssues", v => issues = v); live("fcCounts", v => counts = v);
@@ -82,7 +84,7 @@ let rawSettings = {};
 function mergeSettings(x) { const s = structuredClone(DEFAULTS); for (const k of ["price", "life", "spare"]) Object.assign(s[k], x[k] || {}); Object.assign(s.price, stPrice); if (x.nextBits !== undefined) s.nextBits = x.nextBits; return s; }
 $("signForm").onsubmit = async e => {
   e.preventDefault(); $("sErr").textContent = "Signing in…";
-  try { await signInWithEmailAndPassword(auth, $("sEmail").value.trim(), $("sPass").value); $("sPass").value = ""; }
+  try { await signInWithEmailAndPassword(auth, toLogin($("sEmail").value), $("sPass").value); $("sPass").value = ""; }
   catch (err) { $("sErr").textContent = String(err?.code || "").includes("network") ? "No signal. Signing in needs signal." : "Email or password is wrong."; }
 };
 $("signBtn").onclick = () => signOut(auth);

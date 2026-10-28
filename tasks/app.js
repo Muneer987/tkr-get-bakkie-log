@@ -5,6 +5,8 @@ import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, addDoc, setDoc, updateDoc, deleteDoc, getDocs,
   onSnapshot, query, where, arrayUnion, arrayRemove,
 } from "../lib/firebase.js";
+const showName = e => /@mgr\.tkroperations\.app$/.test(e || "") ? (e[0].toUpperCase() + e.slice(1, e.indexOf("@"))) : e;
+const toLogin = v => { v = String(v || "").trim(); return v.includes("@") ? v : v.toLowerCase().replace(/[^a-z0-9]/g, "") + "@mgr.tkroperations.app"; };  // managers can sign in with a username
 
 const firebaseConfig = {
   apiKey: "AIzaSyALzOBLObrONGVD1bS0Tz02aNKhQ40TRoI",
@@ -72,7 +74,7 @@ $("signBtn").onclick = async () => {
 $("sCancel").onclick = () => $("signDlg").hidden = true;
 $("signForm").onsubmit = async e => {
   e.preventDefault(); $("sErr").textContent = "";
-  try { await signInWithEmailAndPassword(auth, $("sEmail").value.trim(), $("sPass").value); $("signDlg").hidden = true; $("sPass").value = ""; toast("Signed in"); }
+  try { await signInWithEmailAndPassword(auth, toLogin($("sEmail").value), $("sPass").value); $("signDlg").hidden = true; $("sPass").value = ""; toast("Signed in"); }
   catch (err) {
     const c = err?.code || "";
     $("sErr").textContent = c.includes("invalid") || c.includes("wrong") || c.includes("not-found") ? "Email or password is wrong." : c.includes("network") ? "No signal. Sign in needs signal." : "Sign in didn't work. Try again.";
@@ -130,7 +132,7 @@ function renderSelects() {
   $("meWrap").hidden = !!(user && !user.isAnonymous && !mine);
   $("filter").hidden = !isManager();
   $("signBtn").textContent = !user || user.isAnonymous ? "Manager sign in" : "Sign out";
-  $("who").textContent = !user || user.isAnonymous ? "" : mine ? `Signed in as ${mine.name}` : `Signed in as ${email}${isAdmin() ? " · app admin" : " · manager"}`;
+  $("who").textContent = !user || user.isAnonymous ? "" : mine ? `Signed in as ${mine.name}` : `Signed in as ${showName(email)}${isAdmin() ? " · app admin" : " · manager"}`;
   f.innerHTML = `<option value="">Everyone</option>` + team.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
   f.value = team.some(p => p.id === cur) ? cur : "";
 }
@@ -353,8 +355,8 @@ $("manageBox").addEventListener("click", async e => {
 });
 $("addMgr").onsubmit = async e => {
   e.preventDefault();
-  const em = $("mgrEmail").value.trim().toLowerCase(), pw = $("mgrPass").value;
-  if (!em.includes("@")) { $("mgrMsg").textContent = "Type the manager's email."; return; }
+  const em = toLogin($("mgrEmail").value).toLowerCase(), pw = $("mgrPass").value;
+  if (!$("mgrEmail").value.trim()) { $("mgrMsg").textContent = "Type the manager's username or email."; return; }
   if (pw && pw.length < 6) { $("mgrMsg").textContent = "The password must be at least 6 characters."; return; }
   $("mgrMsg").textContent = "Adding…";
   let note = "";
