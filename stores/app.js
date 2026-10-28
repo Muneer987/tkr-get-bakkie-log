@@ -402,7 +402,7 @@ function duplicates() {   // later lines that repeat an earlier one; the first l
 /* ---------- numbers ---------- */
 const storeItems = st => items.filter(i => i.store === st || i.store === "both");
 const itemOf = id => items.find(i => i.id === id);
-const inMonth = (x, m) => (x.date || "").slice(0, 7) === m;
+const inMonth = (x, m) => typeof m === "object" ? (x.date || "") >= m.from && (x.date || "") <= m.to : (x.date || "").slice(0, 7) === m;   // m: "YYYY-MM" or { from, to }
 const val = x => num(x.qty) * num(x.price);
 const issuesOf = (st, m) => moves.filter(x => x.kind === "issue" && (!st || x.store === st) && (!m || inMonth(x, m)));
 const receiptsOf = (st, m) => moves.filter(x => x.kind === "receive" && (!st || x.store === st) && (!m || inMonth(x, m)));
@@ -566,11 +566,16 @@ function stockView() {
         <td class="num ${low ? "low" : ""}">${nq(s.onHand)}</td><td class="num">${i.min ? nq(i.min) : ""}</td></tr>`; }).join("")}
     </tbody></table></div><p class="muted">Items typed as "Other item" are not in this list; admin adds them under Items & prices to track their stock.</p></section>`;
 }
+let repFrom = today().slice(0, 8) + "01", repTo = today();
 function reportView() {
-  return `<section class="card" style="max-width:640px"><h2>Consumption report</h2>
-    <p style="margin-top:0">A TKR-branded Excel for the month, set out like the stores consumption report: totals per machine and everything issued for the Drill rigs and the Rompad rockbreakers, every issue, PPE, and everything received.</p>
-    <div class="grid">${monthPick()}<label>Stores controller <input id="repCtl" value="${esc(myName())}"></label><label>Supervisor <input id="repSup" value="${esc(settings.supervisor || "")}"></label></div>
-    <button class="primary" data-report="1" style="margin-top:12px">Download consumption report</button></section>`;
+  const last = new Date(); last.setDate(0); const lf = ymd(new Date(last.getFullYear(), last.getMonth(), 1)), lt = ymd(last);
+  return `<section class="card" style="max-width:680px"><h2>Consumption report</h2>
+    <p style="margin-top:0">A TKR-branded Excel for the dates you choose: charts of what each machine used, totals per machine and everything issued for the Drill rigs and the Rompad rockbreakers, every issue, PPE, and everything received.</p>
+    <div class="row" style="margin-bottom:10px"><button type="button" data-rq="${today()}|${today()}">Today</button><button type="button" data-rq="${ymd(new Date(Date.now() - 864e5))}|${ymd(new Date(Date.now() - 864e5))}">Yesterday</button>
+      <button type="button" data-rq="${ymd(new Date(Date.now() - 6 * 864e5))}|${today()}">Last 7 days</button><button type="button" data-rq="${today().slice(0, 8)}01|${today()}">This month</button><button type="button" data-rq="${lf}|${lt}">Last month</button></div>
+    <div class="grid"><label>From <input type="date" id="repFrom" value="${repFrom}" max="${today()}"></label><label>To <input type="date" id="repTo" value="${repTo}" max="${today()}"></label><label>Stores controller <input id="repCtl" value="${esc(myName())}"></label><label>Supervisor <input id="repSup" value="${esc(settings.supervisor || "")}"></label></div>
+    <p style="margin:12px 0 0;font-size:18px"><b>${fmt(repFrom)}</b> to <b>${fmt(repTo)}</b></p>
+    <button class="primary" data-report="1" style="margin-top:10px;min-height:52px;font-size:17px">Download consumption report</button></section>`;
 }
 function itemsView() {
   const its = items.slice().sort((a, b) => (a.store + a.cat + a.name).localeCompare(b.store + b.cat + b.name));
@@ -599,7 +604,10 @@ app.addEventListener("click", async e => {
   if (b.dataset.store) { store = b.dataset.store; lsSet("tkr-st-store", store); form = { out: {}, in: {} }; render(); return; }
   if (b.dataset.tab) { tab = b.dataset.tab; lsSet("tkr-st-tab", tab); render(); return; }
   if (b.dataset.pickitem) { const [kind, id] = b.dataset.pickitem.split(":"); form[kind].itemId = id; render(); return; }
-  if (b.dataset.report) { const ctl = $("repCtl")?.value || myName(), sup = $("repSup")?.value ?? settings.supervisor; exportReport(month, ctl, sup); return; }
+  if (b.dataset.rq) { [repFrom, repTo] = b.dataset.rq.split("|"); render(true); return; }
+  if (b.dataset.report) { const ctl = $("repCtl")?.value || myName(), sup = $("repSup")?.value ?? settings.supervisor;
+    let P = tab === "report" ? { from: $("repFrom")?.value || repFrom, to: $("repTo")?.value || repTo } : { from: month + "-01", to: ymd(new Date(+month.slice(0, 4), +month.slice(5, 7), 0)) };
+    if (P.from > P.to) { toast("Choose a From date before the To date."); return; } exportReport(P, ctl, sup); return; }
   if (b.dataset.del) { const x = moves.find(m => m.id === b.dataset.del); if (x && confirm(`Remove this line?\n${x.qty} × ${x.item}`)) deleteDoc(doc(db, "stMoves", x.id)).then(() => toast("Removed")).catch(fail); return; }
   if (b.dataset.count) {
     const it = itemOf(b.dataset.count), v = app.querySelector(`[data-countval="${CSS.escape(b.dataset.count)}"]`).value.trim();
@@ -623,6 +631,7 @@ function readItemRows() {
 app.addEventListener("change", e => {
   const t = e.target;
   if (t.id === "month") { month = t.value || month; render(); return; }
+  if (t.id === "repFrom" || t.id === "repTo") { if (t.id === "repFrom") repFrom = t.value || repFrom; else repTo = t.value || repTo; render(true); return; }
   if (t.id === "ppeStore") { ppeStore = t.value; render(); return; }
   if (t.id === "oCat" || t.id === "iCat") { const k = t.id === "oCat" ? "out" : "in"; form[k] = { cat: t.value }; render(); return; }
   if (t.id === "oMach") { syncForms(); return; }
@@ -885,6 +894,43 @@ async function countPdf(r, photos) {
   const { deliver } = await import("../lib/deliver.js"); deliver(P.output("blob"), name);
 }
 
+/* ---------- charts for the consumption report: drawn on a canvas, put into Excel as pictures ---------- */
+function chartPng({ title, labels, series, stacked = false, money = false, w = 1000, h = 460 }) {
+  const c = document.createElement("canvas"), k = 2; c.width = w * k; c.height = h * k; const g = c.getContext("2d"); g.scale(k, k);
+  g.fillStyle = "#ffffff"; g.fillRect(0, 0, w, h);
+  g.fillStyle = "#111111"; g.fillRect(0, 0, w, 44); g.fillStyle = "#d4a12a"; g.fillRect(0, 44, w, 3);
+  g.font = "bold 19px Arial"; g.fillStyle = "#ffffff"; g.textBaseline = "middle"; g.fillText(title, 18, 23);
+  const fmtN = v => money ? "R" + String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, " ") : String(Math.round(v * 10) / 10);
+  if (!labels.length) { g.fillStyle = "#6b6558"; g.font = "16px Arial"; g.fillText("Nothing issued in these dates.", 18, h / 2); return c.toDataURL("image/png"); }
+  const legendH = series.length > 1 ? 30 : 0, top = 62 + legendH, left = 190, right = w - 90, bottom = h - 20;
+  if (series.length > 1) { let x = 18; g.font = "13px Arial"; series.forEach(s => { g.fillStyle = s.color; g.fillRect(x, 60, 14, 14); g.fillStyle = "#1a1a1a"; g.fillText(s.name, x + 20, 67); x += g.measureText(s.name).width + 46; }); }
+  const tot = labels.map((_, i) => stacked ? series.reduce((n, s) => n + (s.values[i] || 0), 0) : Math.max(...series.map(s => s.values[i] || 0)));
+  const max = Math.max(1, ...tot), rowH = (bottom - top) / labels.length, barH = Math.min(26, rowH * 0.7);
+  g.strokeStyle = "#e6e0d2"; g.lineWidth = 1; for (let t = 0; t <= 4; t++) { const x = left + (right - left) * t / 4; g.beginPath(); g.moveTo(x, top - 4); g.lineTo(x, bottom); g.stroke(); }
+  labels.forEach((lab, i) => {
+    const y = top + rowH * i + (rowH - barH) / 2; g.fillStyle = "#1a1a1a"; g.font = "bold 13px Arial"; g.textAlign = "right"; g.fillText(String(lab).slice(0, 26), left - 10, y + barH / 2); g.textAlign = "left";
+    let x = left;
+    series.forEach((s, si) => { const v = s.values[i] || 0; if (!v) return; const bw = (right - left) * v / max;
+      if (stacked) { g.fillStyle = s.color; g.fillRect(x, y, bw, barH); x += bw; } else { const bh = barH / series.length; g.fillStyle = s.color; g.fillRect(left, y + bh * si, bw, bh - 1); } });
+    g.fillStyle = "#1a1a1a"; g.font = "bold 13px Arial"; g.fillText(fmtN(tot[i]), (stacked ? x : left + (right - left) * tot[i] / max) + 8, y + barH / 2);
+  });
+  return c.toDataURL("image/png");
+}
+function columnPng({ title, labels, values, color = "#d4a12a", money = false, w = 1000, h = 400 }) {
+  const c = document.createElement("canvas"), k = 2; c.width = w * k; c.height = h * k; const g = c.getContext("2d"); g.scale(k, k);
+  g.fillStyle = "#ffffff"; g.fillRect(0, 0, w, h); g.fillStyle = "#111111"; g.fillRect(0, 0, w, 44); g.fillStyle = "#d4a12a"; g.fillRect(0, 44, w, 3);
+  g.font = "bold 19px Arial"; g.fillStyle = "#ffffff"; g.textBaseline = "middle"; g.fillText(title, 18, 23);
+  const left = 70, right = w - 20, top = 70, bottom = h - 46, max = Math.max(1, ...values), cw = (right - left) / Math.max(1, labels.length);
+  const fmtN = v => money ? "R" + String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, " ") : String(Math.round(v * 10) / 10);
+  g.strokeStyle = "#e6e0d2"; for (let t = 0; t <= 4; t++) { const y = bottom - (bottom - top) * t / 4; g.beginPath(); g.moveTo(left, y); g.lineTo(right, y); g.stroke(); g.fillStyle = "#6b6558"; g.font = "11px Arial"; g.textAlign = "right"; g.fillText(fmtN(max * t / 4), left - 6, y); }
+  g.textAlign = "center";
+  labels.forEach((lab, i) => { const v = values[i] || 0, bh = (bottom - top) * v / max, x = left + cw * i + cw * 0.15, bw = cw * 0.7;
+    g.fillStyle = color; g.fillRect(x, bottom - bh, bw, bh);
+    if (v && labels.length <= 31) { g.fillStyle = "#1a1a1a"; g.font = "bold 11px Arial"; g.fillText(fmtN(v), x + bw / 2, bottom - bh - 9); }
+    if (labels.length <= 16 || i % Math.ceil(labels.length / 16) === 0) { g.fillStyle = "#1a1a1a"; g.font = "12px Arial"; g.fillText(lab, x + bw / 2, bottom + 16); } });
+  g.textAlign = "left"; return c.toDataURL("image/png");
+}
+
 /* ---------- branded consumption report (ExcelJS, TKR logo, black and gold) ---------- */
 async function exportReport(m, ctl, sup) {
   toast("Making the consumption report…");
@@ -898,20 +944,23 @@ async function exportReport(m, ctl, sup) {
   const mcList = [...new Set([...STORES.drill.machines, ...STORES.rompad.machines, ...issuesOf(null, m).map(x => x.machine).filter(Boolean).sort()])];
   const mcFill = mc => { const i = mcList.indexOf(mc); return i < 0 ? "FFF2F2F2" : MC_FILLS[i % MC_FILLS.length]; };
   const OIL_C = { "Hydraulic oil": "FF1F5FA8", "Engine oil": "FF8A4B08", "Grease": "FF5B5B5B", "Rockdrill / compressor oil": "FF2E7D4F", "Other oils & lubricants": "FF6B3FA0" };
-  const title = `TKR OPERATIONS – STORES CONSUMPTION REPORT, ${monthName(m).toUpperCase()}`;
+  const period = m.from === m.to ? fmt(m.from) : `${fmt(m.from)}  to  ${fmt(m.to)}`;
+  const title = "TKR OPERATIONS – STORES CONSUMPTION REPORT";
   const people = `Stores Controller: ${ctl || ""}   |   Supervisor: ${sup || ""}`;
   function sheet(name, sub, widths) {
     const ws = X.addWorksheet(name, { views: [{ showGridLines: false }], pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 } });
     ws.columns = widths.map(w => ({ width: w })); const n = widths.length;
-    for (let r = 1; r <= 4; r++) { ws.getRow(r).height = r === 1 ? 8 : 20; for (let c = 1; c <= n; c++) ws.getCell(r, c).fill = fill(C.BLACK); }
-    ws.getRow(5).height = 4; for (let c = 1; c <= n; c++) ws.getCell(5, c).fill = fill(C.GOLD);
-    if (logo !== null) ws.addImage(logo, { tl: { col: 0.08, row: 1.08 }, ext: { width: 56, height: 56 } });
+    const H = [8, 22, 30, 18, 18];
+    for (let r = 1; r <= 5; r++) { ws.getRow(r).height = H[r - 1]; for (let c = 1; c <= n; c++) ws.getCell(r, c).fill = fill(C.BLACK); }
+    ws.getRow(6).height = 4; for (let c = 1; c <= n; c++) ws.getCell(6, c).fill = fill(C.GOLD);
+    if (logo !== null) ws.addImage(logo, { tl: { col: 0.08, row: 1.15 }, ext: { width: 70, height: 70 } });
     const put = (r, v, font) => { const c = ws.getCell(r, 2); c.value = v; c.font = font; c.alignment = { vertical: "middle" }; };
-    put(2, title, { name: "Arial", size: 14, bold: true, color: { argb: C.WHITE } });
-    put(3, sub, { name: "Arial", size: 10, bold: true, color: { argb: C.GOLD } });
-    put(4, people, { name: "Arial", size: 9, color: { argb: "FFCFC8B8" } });
-    ws.views = [{ state: "frozen", ySplit: 5, showGridLines: false }];
-    return { ws, n, r: 7 };
+    put(2, title, { name: "Arial", size: 13, bold: true, color: { argb: C.WHITE } });
+    put(3, "DATES:  " + period, { name: "Arial", size: 20, bold: true, color: { argb: C.GOLD } });
+    put(4, sub, { name: "Arial", size: 10, bold: true, color: { argb: C.WHITE } });
+    put(5, people, { name: "Arial", size: 9, color: { argb: "FFCFC8B8" } });
+    ws.views = [{ state: "frozen", ySplit: 6, showGridLines: false }];
+    return { ws, n, r: 8 };
   }
   function heading(S, text) { const c = S.ws.getCell(S.r, 1); c.value = text; c.font = { name: "Arial", size: 12, bold: true, color: { argb: C.BLACK } }; S.ws.getRow(S.r).height = 20; S.r++; }
   function head(S, labels, fills = {}) { const row = S.ws.getRow(S.r); row.height = labels.some(l => l.length > 22) ? 44 : 30; labels.forEach((l, i) => { const c = row.getCell(i + 1); c.value = l; c.font = { name: "Arial", size: 10, bold: true, color: { argb: C.WHITE } }; c.fill = fill(fills[i] || C.HEAD); c.border = box; c.alignment = { vertical: "middle", horizontal: i ? "center" : "left", wrapText: true }; }); S.r++; }
@@ -926,6 +975,37 @@ async function exportReport(m, ctl, sup) {
   }
   const dt = s => { if (!s) return ""; const [y, mo, d] = s.split("-").map(Number); return new Date(Date.UTC(y, mo - 1, d)); };
   const sortD = l => l.slice().sort((a, b) => (a.machine || "").localeCompare(b.machine || "") || a.date.localeCompare(b.date) || (a.createdAt || 0) - (b.createdAt || 0));
+  // summary with charts first
+  {
+    const S = sheet("Summary", "Summary and charts", [22, 16, 16, 16, 16, 16, 16, 16, 16]);
+    const allI = issuesOf(null, m), allR = receiptsOf(null, m);
+    heading(S, "Key figures");
+    head(S, ["", "Drill Stores", "Rompad Stores", "Both stores"]);
+    const kf = (lab, f, money) => line(S, [lab, f("drill"), f("rompad"), f(null)], 0, money ? { money: [1, 2, 3], bold: false } : {});
+    kf("Lines issued", st => allI.filter(x => !st || x.store === st).length);
+    kf("Value issued (R)", st => allI.filter(x => !st || x.store === st).reduce((n, x) => n + val(x), 0), true);
+    kf("Lines received", st => allR.filter(x => !st || x.store === st).length);
+    kf("PPE issued (qty)", st => allI.filter(x => x.cat === "PPE" && (!st || x.store === st)).reduce((n, x) => n + num(x.qty), 0));
+    S.r++;
+    const OILC = { "Hydraulic oil": "#1f5fa8", "Engine oil": "#8a4b08", "Grease": "#5b5b5b", "Rockdrill / compressor oil": "#2e7d4f", "Other oils & lubricants": "#6b3fa0" };
+    const byMc = {}; allI.forEach(x => { const mc = x.machine || "Store / no machine"; byMc[mc] = byMc[mc] || { oil: {}, oilT: 0, v: 0 }; if (OILS.includes(x.cat)) { byMc[mc].oil[x.cat] = (byMc[mc].oil[x.cat] || 0) + num(x.qty); byMc[mc].oilT += num(x.qty); } byMc[mc].v += val(x); });
+    const oilMc = Object.entries(byMc).filter(([, v]) => v.oilT > 0).sort((a, b) => b[1].oilT - a[1].oilT).slice(0, 12);
+    const valMc = Object.entries(byMc).filter(([, v]) => v.v > 0).sort((a, b) => b[1].v - a[1].v).slice(0, 12);
+    const byItem = {}; allI.forEach(x => { const k = x.item + (x.unit ? " (" + x.unit + ")" : ""); byItem[k] = (byItem[k] || 0) + num(x.qty); });
+    const topItems = Object.entries(byItem).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    const days = []; for (let d = parse(m.from); ymd(d) <= m.to && days.length < 92; d.setDate(d.getDate() + 1)) days.push(ymd(d));
+    const pics = [
+      chartPng({ title: "Oils used per machine (most first)", labels: oilMc.map(([k]) => k), stacked: true, series: OILS.map(o => ({ name: o, color: OILC[o], values: oilMc.map(([, v]) => v.oil[o] || 0) })).filter(s => s.values.some(Boolean)), h: Math.max(260, 120 + oilMc.length * 34) }),
+      chartPng({ title: "Value issued per machine (R)", labels: valMc.map(([k]) => k), money: true, series: [{ name: "Value", color: "#d4a12a", values: valMc.map(([, v]) => v.v) }], h: Math.max(240, 100 + valMc.length * 32) }),
+      chartPng({ title: "Top 10 items issued (quantity)", labels: topItems.map(([k]) => k), series: [{ name: "Qty", color: "#111111", values: topItems.map(([, v]) => v) }], h: Math.max(240, 100 + topItems.length * 32) }),
+      columnPng({ title: "Value issued per day (R)", labels: days.map(d => d.slice(8, 10) + "/" + d.slice(5, 7)), values: days.map(d => allI.filter(x => x.date === d).reduce((n, x) => n + val(x), 0)), money: true }),
+    ];
+    for (const dataUrl of pics) {
+      const img = await new Promise(res => { const im = new Image(); im.onload = () => res(im); im.src = dataUrl; });
+      const id = X.addImage({ base64: dataUrl, extension: "png" }), wpx = 900, hpx = Math.round(wpx * img.height / img.width);
+      S.ws.addImage(id, { tl: { col: 0, row: S.r - 1 }, ext: { width: wpx, height: hpx } }); S.r += Math.ceil(hpx / 20) + 2;
+    }
+  }
   // one sheet per store, set out like the template
   for (const st of ["drill", "rompad"]) {
     const S = sheet(STORES[st].sheet, STORES[st].sub, [16, 20, 15, 34, 17, 15, 18, 20, 14]);
@@ -967,7 +1047,7 @@ async function exportReport(m, ctl, sup) {
   rec.forEach((x, i) => line(S, [dt(x.date), x.store === "drill" ? "Drill" : "Rompad", x.cat, x.item, num(x.qty), x.unit || "", x.from || "", x.ref || "", x.byName || "", x.note || ""], i, { date: [0] }));
   const buf = await X.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-  const name = `TKR_Stores_Consumption_${MONTHS[+m.slice(5, 7) - 1]}_${m.slice(0, 4)}.xlsx`;
+  const name = `TKR_Stores_Consumption_${fmt(m.from).replace(/\//g, "-")}${m.from === m.to ? "" : "_to_" + fmt(m.to).replace(/\//g, "-")}.xlsx`;
   const { deliver } = await import("../lib/deliver.js");
   deliver(blob, name, { doneLabel: "Done – clear this phone's copy", onDone: async () => { const fb = await import("../lib/firebase.js"); const { clearPhoneCopy } = await import("../lib/deliver.js"); await clearPhoneCopy(fb, [db], toast); } });
 }
