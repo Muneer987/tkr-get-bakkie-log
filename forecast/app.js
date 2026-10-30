@@ -277,7 +277,15 @@ function listOf(arr, line) {
 }
 const today = () => ymd(new Date());
 function metresView() {
-  return `<section class="card"><h2>Add metres</h2>
+  const first = metres.map(x => x.date).sort()[0] || today().slice(0, 8) + "01";
+  mxFrom = mxFrom || first; mxTo = mxTo || addDays(today(), -1);
+  return `<section class="card" style="border:2px solid #d4a12a"><h2>Machines and metres (Excel)</h2>
+    <p class="muted" style="margin-top:0">Every rig's metres per day for the dates you choose, with the status and delays from the shift reports, totals per machine and a chart.</p>
+    <div class="row" style="align-items:flex-end"><label style="flex:1 1 150px">From <input type="date" id="mxFrom" value="${mxFrom}" min="${first}" max="${today()}"></label>
+      <label style="flex:1 1 150px">To <input type="date" id="mxTo" value="${mxTo}" min="${first}" max="${today()}"></label>
+      <button class="primary" id="mxGo" style="flex:1 1 220px;min-height:48px">Download machines and metres</button></div>
+    <p style="margin:10px 0 0;font-size:18px"><b>${fmt(mxFrom)}</b> to <b>${fmt(mxTo)}</b></p></section>
+    <section class="card"><h2>Add metres</h2>
     <form id="fMetres" class="grid" autocomplete="off">
       <label>Date <input type="date" name="date" value="${addDays(today(), -1)}" required></label>
       <label>Shift <select name="shift"><option>Day</option><option>Night</option></select></label>
@@ -285,9 +293,10 @@ function metresView() {
       <label>Metres (fresh) <input name="metres" inputmode="decimal" required></label>
       <label>Block <input name="block"></label>
       <label>Supervisor <input name="supervisor"></label>
+      <label style="grid-column:1/-1">Status / delays <input name="note" placeholder="For example Drifter out for service, No drill bit, Waiting for engine"></label>
       <div style="display:flex;align-items:flex-end"><button class="primary" style="width:100%">Add</button></div>
     </form></section>
-    <section class="card"><h2>Latest metres</h2>${listOf(metres.map(x => ({ ...x, _c: "fcMetres" })), x => `${fmt(x.date)} ${esc(x.shift)} · <b>${esc(x.rig)}</b> · ${M1(num(x.metres))} m ${x.block ? "· " + esc(x.block) : ""} ${x.supervisor ? "· " + esc(x.supervisor) : ""}`)}</section>`;
+    <section class="card"><h2>Latest metres</h2>${listOf(metres.map(x => ({ ...x, _c: "fcMetres" })), x => `${fmt(x.date)} ${esc(x.shift)} · <b>${esc(x.rig)}</b> · ${M1(num(x.metres))} m ${x.block ? "· " + esc(x.block) : ""} ${x.supervisor ? "· " + esc(x.supervisor) : ""}${x.note ? ` <span class="muted">· ${esc(x.note)}</span>` : ""}`)}</section>`;
 }
 function issuesView() {
   const list = allIssues();
@@ -332,9 +341,12 @@ app.addEventListener("click", async e => {
   if (b.dataset.tab) { tab = b.dataset.tab; render(); return; }
   if (b.dataset.del) { const [c, id] = b.dataset.del.split("|"); if (confirm("Delete this line?")) deleteDoc(doc(db, c, id)).catch(fail); return; }
   if (b.id === "msgBtn") { const t = message(calc(reportDate)); try { await navigator.clipboard.writeText(t); toast("Message copied. Paste it into WhatsApp."); } catch { prompt("Copy the message:", t); } return; }
+  if (b.id === "mxGo") { const f = $("mxFrom").value || mxFrom, t = $("mxTo").value || mxTo; if (f > t) { toast("Choose a From date before the To date."); return; }
+    b.disabled = true; b.textContent = "Making the Excel file…"; try { await exportMetres(f, t); } catch (x) { console.warn(x); toast("The Excel file couldn't be made."); } render(); return; }
   if (b.id === "xlBtn") { b.disabled = true; b.textContent = "Making the Excel file…"; try { await exportExcel(calc(reportDate)); } catch (x) { console.warn(x); toast("The Excel file couldn't be made."); } render(); }
 });
 app.addEventListener("change", async e => {
+  if (e.target.id === "mxFrom" || e.target.id === "mxTo") { if (e.target.id === "mxFrom") mxFrom = e.target.value || mxFrom; else mxTo = e.target.value || mxTo; render(); return; }
   if (e.target.id === "rd") { reportDate = e.target.value || ymd(new Date()); render(); }
   if (e.target.id === "impFile") importFile(e.target.files[0]);
   if (e.target.id === "metFile") importMetres(e.target.files[0]);
@@ -342,7 +354,7 @@ app.addEventListener("change", async e => {
 app.addEventListener("submit", async e => {
   e.preventDefault(); const f = e.target, v = Object.fromEntries(new FormData(f).entries()), now = Date.now();
   try {
-    if (f.id === "fMetres") { await addDoc(collection(db, "fcMetres"), { date: v.date, shift: v.shift, rig: v.rig, metres: num(v.metres), block: v.block.trim(), supervisor: v.supervisor.trim(), by: email, createdAt: now }); toast("Metres added"); }
+    if (f.id === "fMetres") { await addDoc(collection(db, "fcMetres"), { date: v.date, shift: v.shift, rig: v.rig, metres: num(v.metres), block: v.block.trim(), supervisor: v.supervisor.trim(), note: (v.note || "").trim(), by: email, createdAt: now }); toast("Metres added"); }
     if (f.id === "fIssues") { await addDoc(collection(db, "fcIssues"), { date: v.date, shift: v.shift, rig: v.rig, item: v.item, qty: num(v.qty), to: v.to.trim(), by: v.by.trim(), createdAt: now }); toast("GET issued added"); }
     if (f.id === "fStock") {
       if (v.count === "" && v.received === "") { toast("Type a count or a received qty."); return; }
@@ -493,6 +505,88 @@ function message(c) {
 /* ---------- branded Excel ---------- */
 /* ---------- Excel export in the layout of the Daily GET Consumption Tracker ----------
    Same tabs as the tracker (Daily report, Prices, Consumption, Production, Stock, This week, Next week), TKR-branded, values worked out by the app. */
+/* ---------- machines and metres Excel (Metres tab): chosen dates, every rig, statuses from the shift reports ---------- */
+let mxFrom = "", mxTo = "";
+function stackPng(days, rigs, colors, val) {
+  const w = 1100, h = 430, k = 2, c = document.createElement("canvas"); c.width = w * k; c.height = h * k; const g = c.getContext("2d"); g.scale(k, k);
+  g.fillStyle = "#fff"; g.fillRect(0, 0, w, h); g.fillStyle = "#111"; g.fillRect(0, 0, w, 44); g.fillStyle = "#d4a12a"; g.fillRect(0, 44, w, 3);
+  g.font = "bold 19px Arial"; g.fillStyle = "#fff"; g.textBaseline = "middle"; g.fillText("Metres drilled per day, by machine", 18, 23);
+  let x0 = 18; g.font = "13px Arial"; rigs.forEach((r, i) => { g.fillStyle = colors[i]; g.fillRect(x0, 60, 14, 14); g.fillStyle = "#1a1a1a"; g.fillText(r, x0 + 20, 67); x0 += g.measureText(r).width + 46; });
+  const left = 60, right = w - 16, top = 92, bottom = h - 40, tot = days.map(d => rigs.reduce((n, r) => n + Math.max(0, val(d, r)), 0)), max = Math.max(1, ...tot), cw = (right - left) / Math.max(1, days.length);
+  g.strokeStyle = "#e6e0d2"; g.textAlign = "right"; for (let t = 0; t <= 4; t++) { const y = bottom - (bottom - top) * t / 4; g.beginPath(); g.moveTo(left, y); g.lineTo(right, y); g.stroke(); g.fillStyle = "#6b6558"; g.font = "11px Arial"; g.fillText(Math.round(max * t / 4), left - 6, y); }
+  g.textAlign = "center";
+  days.forEach((d, i) => { let y = bottom; const x = left + cw * i + cw * 0.15, bw = cw * 0.7;
+    rigs.forEach((r, ri) => { const v = Math.max(0, val(d, r)); if (!v) return; const bh = (bottom - top) * v / max; g.fillStyle = colors[ri]; g.fillRect(x, y - bh, bw, bh); y -= bh; });
+    if (tot[i] && days.length <= 31) { g.fillStyle = "#1a1a1a"; g.font = "bold 10px Arial"; g.fillText(Math.round(tot[i]), x + bw / 2, y - 8); }
+    if (days.length <= 16 || i % Math.ceil(days.length / 16) === 0) { g.fillStyle = "#1a1a1a"; g.font = "11px Arial"; g.fillText(d.slice(8, 10) + "/" + d.slice(5, 7), x + bw / 2, bottom + 15); } });
+  return c.toDataURL("image/png");
+}
+async function exportMetres(from, to) {
+  toast("Making the machines and metres report…");
+  try { await loadLib("../lib/exceljs.min.js"); } catch { toast("Open the app once with signal, then try again."); return; }
+  const wb = new ExcelJS.Workbook(); wb.creator = "TKR Operations"; wb.created = new Date();
+  let logo = null; try { logo = wb.addImage({ buffer: await (await fetch("../icons/icon-512.png")).arrayBuffer(), extension: "png" }); } catch {}
+  const X = { BLACK: "FF111111", HEAD: "FF262626", GOLD: "FFD4A12A", CREAM: "FFFFF8E6", TOT: "FFFFF2CC", WHITE: "FFFFFFFF", GRID: "FFD9D3C5", MUTED: "FF6B6558", RED: "FFB3261E" };
+  const fill = x => ({ type: "pattern", pattern: "solid", fgColor: { argb: x } }), thin = { style: "thin", color: { argb: X.GRID } }, box = { top: thin, left: thin, bottom: thin, right: thin };
+  const F = (o = {}) => Object.assign({ name: "Arial", size: 10, color: { argb: X.BLACK } }, o);
+  const D = s => { const [y, m, d] = s.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)); }, DEC1 = "#,##0.0";
+  const period = from === to ? fmt(from) : `${fmt(from)}  to  ${fmt(to)}`;
+  function sheet(name, widths, sub) {
+    const ws = wb.addWorksheet(name, { views: [{ showGridLines: false }], pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 } });
+    ws.columns = widths.map(w => ({ width: w })); const n = widths.length, H = [8, 22, 30, 18];
+    for (let r = 1; r <= 4; r++) { ws.getRow(r).height = H[r - 1]; for (let k = 1; k <= n; k++) ws.getCell(r, k).fill = fill(X.BLACK); }
+    ws.getRow(5).height = 4; for (let k = 1; k <= n; k++) ws.getCell(5, k).fill = fill(X.GOLD);
+    if (logo !== null) ws.addImage(logo, { tl: { col: 0.08, row: 1.12 }, ext: { width: 62, height: 62 } });
+    const put = (r, v, f) => { const x = ws.getCell(r, 2); x.value = v; x.font = f; x.alignment = { vertical: "middle" }; };
+    put(2, "TKR OPERATIONS – DRILLING: MACHINES AND METRES", F({ size: 13, bold: true, color: { argb: X.WHITE } }));
+    put(3, "DATES:  " + period, F({ size: 20, bold: true, color: { argb: X.GOLD } }));
+    put(4, sub, F({ size: 10, bold: true, color: { argb: X.WHITE } }));
+    ws.views = [{ state: "frozen", ySplit: 5, showGridLines: false }]; return ws;
+  }
+  const head = (ws, r, labels) => { const row = ws.getRow(r); row.height = 30; labels.forEach((l, i) => { const x = row.getCell(i + 1); x.value = l; x.font = F({ bold: true, color: { argb: X.WHITE } }); x.fill = fill(X.HEAD); x.border = box; x.alignment = { vertical: "middle", horizontal: i ? "center" : "left", wrapText: true }; }); return r + 1; };
+  const line = (ws, r, vals, i, o = {}) => { const row = ws.getRow(r); row.height = o.h || 18;
+    vals.forEach((v, k) => { const x = row.getCell(k + 1); x.value = v === "" || v == null ? null : v; x.border = box; x.font = F({ bold: !!o.bold || k === 0 });
+      x.alignment = { vertical: "middle", horizontal: typeof v === "number" || v instanceof Date ? "center" : "left", wrapText: true };
+      if (typeof v === "number") x.numFmt = DEC1; if (v instanceof Date) x.numFmt = "dd/mm/yyyy";
+      if (o.tot) { x.fill = fill(X.TOT); x.border = { ...box, top: { style: "medium", color: { argb: X.GOLD } } }; x.font = F({ bold: true }); } else if (i % 2) x.fill = fill(X.CREAM); });
+    return r + 1; };
+  const NA = "Not allocated", inR = x => x.date >= from && x.date <= to, list = metres.filter(inR);
+  const rigs = [...RIGS, ...(list.some(x => x.rig === NA) ? [NA] : [])], label = r => r === NA ? "Unassigned" : r;
+  const days = []; for (let d = parse(from); ymd(d) <= to; d.setDate(d.getDate() + 1)) days.push(ymd(d));
+  const m = (d, r, sh) => list.filter(x => x.date === d && x.rig === r && (!sh || x.shift === sh)).reduce((n, x) => n + num(x.metres), 0);
+  const notes = d => { const g = new Map(); list.filter(x => x.date === d && x.note).forEach(x => { const k = x.note.trim(); if (!g.has(k)) g.set(k, new Set()); if (x.rig !== NA) g.get(k).add(x.rig.replace(" ", "") + (x.shift ? " " + x.shift.toLowerCase() : "")); });
+    return [...g.entries()].map(([t, rs]) => /TDR/i.test(t) || !rs.size ? t : [...rs].join(", ") + ": " + t).join(" | "); };
+  // 1. per day
+  let ws = sheet("Metres per day", [13, 13, 13, 13, ...(rigs.includes(NA) ? [14] : []), 13, 15, 60], "Metres per machine per day, with the status from the shift reports"), r = 7;
+  r = head(ws, r, ["Date", ...rigs.map(label), "Day total", "Running total", "Status / delays"]);
+  let run = 0;
+  days.forEach((d, i) => { const v = rigs.map(rg => r1(m(d, rg))), t = r1(v.reduce((a, b) => a + b, 0)); run = r1(run + t);
+    const nt = notes(d);
+    r = line(ws, r, [D(d), ...v, t, run, nt], i, { h: nt.length > 70 ? 32 : 18 }); });
+  const tots = rigs.map(rg => r1(list.filter(x => x.rig === rg).reduce((n, x) => n + num(x.metres), 0)));
+  r = line(ws, r, ["Total", ...tots, r1(tots.reduce((a, b) => a + b, 0)), "", ""], 0, { tot: true });
+  // chart
+  const colors = ["#d4a12a", "#111111", "#2e7d4f", "#8a8378"];
+  const png = stackPng(days, rigs.map(label), colors, (d, rg) => m(d, rigs[rigs.map(label).indexOf(rg)]));
+  const im = await new Promise(res => { const x = new Image(); x.onload = () => res(x); x.src = png; });
+  const id = wb.addImage({ base64: png, extension: "png" }); ws.addImage(id, { tl: { col: 0, row: r + 1 }, ext: { width: 980, height: Math.round(980 * im.height / im.width) } });
+  // 2. per machine
+  ws = sheet("Per machine", [18, 14, 16, 16, 18, 14], "Totals per machine for the dates chosen"); r = 7;
+  r = head(ws, r, ["Machine", "Total (m)", "Days with metres", "Days on 0 m", "Average m per drilling day", "Share of total"]);
+  const grand = tots.reduce((a, b) => a + b, 0) || 1;
+  rigs.forEach((rg, i) => { const dd = days.map(d => m(d, rg)), drilled = dd.filter(v => v > 0).length, zero = days.filter(d => list.some(x => x.date === d && x.rig === rg) && m(d, rg) <= 0).length;
+    const t = tots[i]; r = line(ws, r, [label(rg), t, drilled, rg === NA ? "" : zero, drilled ? r1(t / drilled) : 0, Math.round(t / grand * 1000) / 10 + "%"], i); });
+  r = line(ws, r, ["All machines", r1(grand), "", "", "", "100%"], 0, { tot: true });
+  // 3. every shift line
+  ws = sheet("Shift detail", [13, 10, 14, 16, 12, 18, 70], "Every metres line captured"); r = 7;
+  r = head(ws, r, ["Date", "Shift", "Machine", "Block", "Metres", "Supervisor", "Status / delays"]);
+  list.slice().sort((a, b) => a.date.localeCompare(b.date) || String(a.shift).localeCompare(String(b.shift)) || String(a.rig).localeCompare(String(b.rig)))
+    .forEach((x, i) => { r = line(ws, r, [D(x.date), x.shift || "", label(x.rig), x.block || "", r1(num(x.metres)), x.supervisor || "", x.note || ""], i); });
+  const buf = await wb.xlsx.writeBuffer(), blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const name = `TKR_Drilling_Machines_and_Metres_${fmt(from).replace(/\//g, "-")}${from === to ? "" : "_to_" + fmt(to).replace(/\//g, "-")}.xlsx`;
+  const { deliver } = await import("../lib/deliver.js"); deliver(blob, name);
+}
+
 async function exportExcel(c) {
   await loadLib("../lib/exceljs.min.js");
   const ExcelJS = window.ExcelJS, wb = new ExcelJS.Workbook(); wb.creator = "TKR Operations"; wb.created = new Date();
