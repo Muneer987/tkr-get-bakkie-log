@@ -441,16 +441,16 @@ const LATE_2026_10 = [["2026-10-24", "Day", "", "", "No drilling on Saturday"],
   ["2026-10-24", "Night", "0423", "Katlego", "TDR013 drifter out for service · TDR015 no drill bit · TDR014 waiting for engine"],
   ["2026-10-25", "Night", "0423 / 0424", "Katlego", "TDR013 drifter out for service · TDR015 no drill bit fit to use · TDR014 waiting for engine"]];
 let seedingLate = false;
-/* Site month to date to 25/10 is 5 200 m (as given by Muneer); the 278.5 m above the rig figures is not split by rig or day, so it is booked on 25/10 as unassigned. */
+/* Metres only as per the shift reports and the October metres summary: the 5 200 m site figure (278.5 m unassigned on 25/10) is taken out again. */
 let seedingSite = false;
 async function seedSite5200() {
   if (seedingSite || !isAdmin() || !navigator.onLine) return; seedingSite = true;
   try {
-  if (!(await getDoc(doc(db, "fcSettings", "seed-2026-10-24-25-metres"))).exists()) return;
-  const flag = doc(db, "fcSettings", "adj-2026-10-25-5200"); if ((await getDoc(flag)).exists()) return;
-  await setDoc(doc(db, "fcMetres", "adj-2026-10-25-NA"), { date: "2026-10-25", shift: "", rig: "Not allocated", block: "", metres: 278.5, supervisor: "", src: "summary", note: "Site total 5 200 m up to 25/10, not split by rig", createdAt: Date.now() });
-  await setDoc(flag, { done: Date.now(), by: email });
-  toast("Month to date set to 5 200 m (278.5 m unassigned on 25/10)");
+    const flag = doc(db, "fcSettings", "adj-2026-10-25-5200-removed"); if ((await getDoc(flag)).exists()) return;
+    await deleteDoc(doc(db, "fcMetres", "adj-2026-10-25-NA")).catch(() => {});
+    await setDoc(doc(db, "fcSettings", "adj-2026-10-25-5200"), { done: Date.now(), by: email, removed: true }, { merge: true });
+    await setDoc(flag, { done: Date.now(), by: email });
+    toast("Metres back to the shift reports: 4 921.5 m month to date");
   } catch (e) { console.warn(e); } finally { seedingSite = false; }
 }
 async function seedLate() {
