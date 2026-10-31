@@ -540,8 +540,8 @@ async function seedLate() {
     toast("Shift reports 24/10 and 25/10 loaded: 0 m");
   } catch (e) { console.warn(e); } finally { seedingLate = false; }
 }
-/* 26/10 to 30/10 shift reports (TKR drilling group) checked against the tally sheets: 387.4 m, all TDR 015 (TDR 013 drifter out for service).
-   27/10 night shift: no shift report and no tally sheet, so 0 m until the sheet is found. Loaded once, like the October metres. */
+/* 26/10 to 30/10 shift reports (TKR drilling group) checked against the tally sheets: 471.7 m, all TDR 015 (TDR 013 drifter out for service).
+   27/10 night shift: 84.3 m from the end of shift report in the Soosans drilling group (tally sheet not posted). Loaded once, like the October metres. */
 const OCT_26_30 = [
   ["2026-10-26", "Day", "TDR 013", 0, "", "Zandile", "Breakdown – no drilling"],
   ["2026-10-26", "Day", "TDR 015", 0, "", "Zandile", "Breakdown – no drilling"],
@@ -549,6 +549,8 @@ const OCT_26_30 = [
   ["2026-10-26", "Night", "TDR 015", 45.9, "0423", "Moses", "Tally sheet 40419 · breakdown 4 h · tramming 2 h 30 · waiting for diesel 30 min"],
   ["2026-10-27", "Day", "TDR 013", 0, "0423", "Zandile", "Maintenance 12 h"],
   ["2026-10-27", "Day", "TDR 015", 95.9, "0423", "Zandile", "Tally sheet 003418 · waiting for bit · blasting 1 h · upper jaw cylinder"],
+  ["2026-10-27", "Night", "TDR 013", 0, "0423", "Moses", "Maintenance 12 h"],
+  ["2026-10-27", "Night", "TDR 015", 84.3, "0423", "Moses", "End of shift report (Soosans drilling group), tally sheet not posted · refuelling 30 min · waiting for bit 1 h · rod stuck 2 h"],
   ["2026-10-28", "Day", "TDR 013", 0, "0423", "Yvonne", "Waiting for drifter"],
   ["2026-10-28", "Day", "TDR 015", 50.3, "0423", "Yvonne", "Tally sheet 000860 · retrieving rods 2 h 40 · out for diesel 1 h 43 · rod handler cylinder broke 2 h"],
   ["2026-10-28", "Night", "TDR 013", 0, "0424", "Zandile", "Maintenance 12 h"],
@@ -565,13 +567,13 @@ let seedingOct26 = false;
 async function seedOct26() {
   if (seedingOct26 || !isAdmin() || !navigator.onLine) return; seedingOct26 = true;
   try {
-    const flag = doc(db, "fcSettings", "seed-2026-10-26-30-metres-v2"); if ((await getDoc(flag)).exists()) return;
+    const flag = doc(db, "fcSettings", "seed-2026-10-26-30-metres-v3"); if ((await getDoc(flag)).exists()) return;
     if (!(await getDoc(doc(db, "fcSettings", "seed-2026-10-metres"))).exists()) return;
     const now = Date.now(); let n = 0;
     for (const [date, shift, rig, m, block, sup, note] of OCT_26_30) {
       await setDoc(doc(db, "fcMetres", `rep-${date}-${shift}-${normK(rig)}`), { date, shift, rig, block, metres: m, supervisor: sup, src: "report", note, createdAt: now + n }); n++; }
     await setDoc(flag, { done: now, by: email, lines: n });
-    toast("Shift reports 26/10 to 30/10 loaded: 387.4 m (October 5 308.9 m)");
+    toast("Shift reports 26/10 to 30/10 loaded: 471.7 m (October 5 393.2 m)");
   } catch (e) { console.warn(e); } finally { seedingOct26 = false; }
 }
 /* ---------- metres summary: Date | TDR 013 | TDR 015 | TDR 014 | (Month to date) ---------- */
