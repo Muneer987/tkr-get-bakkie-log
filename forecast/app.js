@@ -287,12 +287,12 @@ function dailyCard() {
   const by = {}; metres.forEach(x => { const d = x.date; by[d] = by[d] || { t: 0, r: {} }; by[d].t += num(x.metres); const k = x.rig === "Not allocated" ? "Unassigned" : x.rig; by[d].r[k] = (by[d].r[k] || 0) + num(x.metres); });
   const days = Object.keys(by).sort().reverse().slice(0, 45);
   return `<section class="card"><h2>Daily metres and evidence</h2>
-    <p class="muted" style="margin-top:0">Tap See tally sheet next to a day to see its signed tally sheets. Download PDF is on that page.${isAdmin() ? " Admin can add a tally sheet photo to any day with + Photo." : ""}</p>
+    <p class="muted" style="margin-top:0">Tap See tally sheet next to a day to see its signed tally sheets. Download PDF is on that page.${isAdmin() ? " Admin can add, replace or remove tally sheets on that page, or tap + Add tally sheet." : ""}</p>
     ${isAdmin() ? `<div style="border:2px dashed var(--gold);border-radius:10px;padding:12px;margin-bottom:12px"><b>Tally sheets not showing?</b> Choose the file <b>TKR_Tally_Sheet_Evidence_October_2026.zip</b> (sent in the chat). It takes about a minute; loading it again does not make copies.
       <div style="margin-top:8px"><label class="primary" style="display:inline-flex;align-items:center;min-height:44px;padding:8px 16px;border-radius:8px;background:var(--gold);color:#141006;font-weight:700;cursor:pointer">Choose the tally sheet file<input type="file" id="evFile" accept=".zip" hidden></label> <span id="evMsg" class="muted"></span></div></div>` : ""}
     <div class="tbl"><table><thead><tr><th>Date</th><th>TDR 013</th><th>TDR 015</th><th>Unassigned</th><th>Day total</th><th>Tally sheet</th></tr></thead><tbody>
     ${days.map(d => `<tr><td><b>${fmt(d)}</b></td><td>${M1(by[d].r["TDR 013"] || 0)}</td><td>${M1(by[d].r["TDR 015"] || 0)}</td><td>${by[d].r.Unassigned ? M1(by[d].r.Unassigned) : ""}</td><td><b>${M1(by[d].t)}</b></td>
-      <td style="white-space:nowrap">${evDays[d] ? `<button class="primary" data-evsee="${d}">See tally sheet (${evDays[d]})</button>` : '<span class="muted">No tally sheet</span>'}${isAdmin() ? ` <label class="ghost" style="cursor:pointer;padding:6px 10px;border:1px solid var(--line);border-radius:8px">+ Photo<input type="file" accept="image/*" data-evadd="${d}" hidden></label>` : ""}</td></tr>`).join("")}
+      <td style="white-space:nowrap">${evDays[d] ? `<button class="primary" data-evsee="${d}">See tally sheet (${evDays[d]})</button>` : '<span class="muted">No tally sheet</span>'}${isAdmin() ? ` <button data-evsee="${d}" data-evnew="1">+ Add tally sheet</button>` : ""}</td></tr>`).join("")}
     </tbody></table></div></section>`;
 }
 async function shrinkB64(file, max = 1400) {
@@ -324,6 +324,11 @@ async function importEvidence(file) {
     say(`Done: ${n} tally sheet photos saved. They now show under Metres → Daily metres and evidence.`); render(); return n;
   } catch (x) { console.warn(x); say(x?.code === "permission-denied" ? "Only an admin can import evidence." : "The file couldn't be read. Choose the evidence ZIP file."); }
 }
+async function recountEv(date) {
+  const s = await getDocs(query(collection(db, "fcSettings"), where("ev_kind", "==", "sheet"), where("ev_date", "==", date)));
+  if (s.size) await setDoc(doc(db, "fcSettings", "evday_" + date), { ev_kind: "day", ev_date: date, n: s.size }); else await deleteDoc(doc(db, "fcSettings", "evday_" + date));
+  evDays[date] = s.size;
+}
 let evAuto = false;
 async function autoEvidence() {
   if (evAuto || !isAdmin() || !navigator.onLine) return; evAuto = true;
@@ -345,19 +350,35 @@ async function autoEvidence() {
 async function showSheets(date) {
   toast("Opening the tally sheets…");
   const s = await getDocs(query(collection(db, "fcSettings"), where("ev_kind", "==", "sheet"), where("ev_date", "==", date)));
-  const L = s.docs.map(d => d.data()).sort((a, b) => (a.rig + (a.shift === "Night" ? 2 : 1)).localeCompare(b.rig + (b.shift === "Night" ? 2 : 1)));
+  const L = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.rig + (a.shift === "Night" ? 2 : 1)).localeCompare(b.rig + (b.shift === "Night" ? 2 : 1)));
   document.getElementById("evView")?.remove();
+  const adm = isAdmin(), sel = "font:inherit;min-height:44px;border-radius:8px;padding:6px 10px";
+  const pick = (attr, label, bg) => `<label style="display:inline-flex;align-items:center;min-height:44px;padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:700;${bg}">${label}<input type="file" accept="image/*" ${attr} hidden></label>`;
   const ov = document.createElement("div"); ov.id = "evView"; ov.setAttribute("role", "dialog");
   ov.style.cssText = "position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.92);overflow:auto;padding:12px";
   const btn = "font:inherit;font-weight:700;min-height:44px;padding:8px 14px;border-radius:8px;cursor:pointer;";
   ov.innerHTML = `<div style="position:sticky;top:0;display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;background:#111;border:2px solid #d4a12a;border-radius:10px;padding:8px 12px;margin:0 auto 12px;max-width:900px;color:#f2efe8">
       <b style="font-size:17px">${fmt(date)} · ${L.length} tally sheet${L.length === 1 ? "" : "s"}</b>
       <span style="display:flex;gap:8px"><button data-evpdf="${date}" style="${btn}background:#d4a12a;color:#141006;border:1px solid #d4a12a">Download PDF</button><button data-evclose style="${btn}background:transparent;color:#f2efe8;border:1px solid #6b6558">Close</button></span></div>
-    <div style="max-width:900px;margin:0 auto">${L.map(x => `<figure style="margin:0 0 14px;background:#fff;border-radius:8px;padding:6px"><figcaption style="font:600 15px/1.35 Roboto,Arial,sans-serif;color:#111;padding:4px 2px 6px">${esc(x.rig)} · ${esc(x.shift)} shift${x.note ? " – " + esc(x.note) : ""}</figcaption><img src="${x.data}" alt="Tally sheet ${esc(x.rig)} ${esc(x.shift)}" style="width:100%;height:auto;display:block"></figure>`).join("") || '<p style="color:#fff">No tally sheet for this day.</p>'}</div>`;
+    <div style="max-width:900px;margin:0 auto">
+    ${adm ? `<div style="background:#1b1b1b;border:2px dashed #d4a12a;border-radius:10px;padding:10px 12px;margin-bottom:12px;color:#f2efe8"><b>Add a tally sheet to ${fmt(date)}</b>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;align-items:center"><select id="evRig" style="${sel}"><option>TDR 015</option><option>TDR 013</option><option>TDR 014</option></select>
+      <select id="evShift" style="${sel}"><option>Day</option><option>Night</option></select>${pick('data-evaddv="' + date + '"', "Choose the photo", "background:#d4a12a;color:#141006")}</div></div>` : ""}
+    ${L.map(x => `<figure style="margin:0 0 14px;background:#fff;border-radius:8px;padding:6px"><figcaption style="font:600 15px/1.35 Roboto,Arial,sans-serif;color:#111;padding:4px 2px 6px">${esc(x.rig)} · ${esc(x.shift)} shift${x.note ? " – " + esc(x.note) : ""}
+      ${adm ? `<span style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">${pick('data-evrep="' + x.id + '"', "Replace photo", "background:#f2efe8;color:#111;border:1px solid #999")}<button data-evrm="${x.id}" style="${btn}background:#fff;color:#b42318;border:1px solid #b42318">Remove</button></span>` : ""}</figcaption><img src="${x.data}" alt="Tally sheet ${esc(x.rig)} ${esc(x.shift)}" style="width:100%;height:auto;display:block"></figure>`).join("") || '<p style="color:#fff">No tally sheet for this day.</p>'}</div>`;
   document.body.appendChild(ov);
   ov.addEventListener("click", async e => { const b = e.target.closest("button"); if (!b) return;
     if (b.hasAttribute("data-evclose")) { ov.remove(); return; }
-    if (b.dataset.evpdf) { b.disabled = true; try { await evidencePdf(b.dataset.evpdf); } catch (x) { console.warn(x); toast("The evidence PDF couldn't be made."); } b.disabled = false; } });
+    if (b.dataset.evpdf) { b.disabled = true; try { await evidencePdf(b.dataset.evpdf); } catch (x) { console.warn(x); toast("The evidence PDF couldn't be made."); } b.disabled = false; return; }
+    if (b.dataset.evrm) { if (!confirm("Remove this tally sheet from " + fmt(date) + "?")) return; b.disabled = true;
+      try { await deleteDoc(doc(db, "fcSettings", b.dataset.evrm)); await recountEv(date); toast("Tally sheet removed"); render(); await showSheets(date); } catch (x) { b.disabled = false; fail(x); } } });
+  ov.addEventListener("change", async e => { const f = e.target.files?.[0]; if (!f) return;
+    try {
+      if (e.target.dataset.evaddv) { toast("Saving the tally sheet…"); await saveEvidence(date, $("evRig").value, $("evShift").value, "", await shrinkB64(f)); toast("Tally sheet added"); }
+      else if (e.target.dataset.evrep) { toast("Replacing the photo…"); await setDoc(doc(db, "fcSettings", e.target.dataset.evrep), { data: await shrinkB64(f), by: email, at: Date.now() }, { merge: true }); toast("Photo replaced"); }
+      else return;
+      render(); await showSheets(date);
+    } catch (x) { fail(x); } });
 }
 async function evidencePdf(date) {
   toast("Making the evidence PDF…");
