@@ -72,7 +72,7 @@ function gateOrApp() {
   $("gate").hidden = true; app.hidden = false; $("signBtn").hidden = false; $("who").textContent = showName(email) + (isAdmin() ? " · admin" : " · manager");
   if (subs.length === 1) {
     const live = (name, set) => subs.push(onSnapshot(collection(db, name), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => netNote("Couldn't load. Check the signal.")));
-    live("fcMetres", v => { metres = v; if (isAdmin()) setTimeout(async () => { await seedOctober(); await seedLate(); await seedSite5200(); }, 1500); }); live("fcIssues", v => issues = v); live("fcCounts", v => counts = v);
+    live("fcMetres", v => { metres = v; if (isAdmin()) setTimeout(async () => { await seedOctober(); await seedLate(); await seedSite5200(); await seedOct26(); }, 1500); }); live("fcIssues", v => issues = v); live("fcCounts", v => counts = v);
     const liveQ = (name, set) => subs.push(onSnapshot(query(collection(db, name), where("store", "==", "drill")), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => console.warn(e)));
     liveQ("stMoves", v => stMoves = v); liveQ("stCounts", v => stCounts = v);
     subs.push(onSnapshot(doc(db, "stConfig", "items"), s => { stPrice = {}; (s.exists() ? s.data().list || [] : []).forEach(i => { if (i.getKey && num(i.price) > 0) stPrice[i.getKey] = num(i.price); }); settings = mergeSettings(rawSettings); render(); }, () => {}));
@@ -539,6 +539,38 @@ async function seedLate() {
     await setDoc(flag, { done: now, by: email, lines: n });
     toast("Shift reports 24/10 and 25/10 loaded: 0 m");
   } catch (e) { console.warn(e); } finally { seedingLate = false; }
+}
+/* 26/10 to 30/10 shift reports (TKR drilling group) checked against the tally sheets: 341.5 m, all TDR 015 (TDR 013 drifter out for service).
+   26/10 and 27/10 night shifts: no shift report and no tally sheet, so 0 m until the sheets are found. Loaded once, like the October metres. */
+const OCT_26_30 = [
+  ["2026-10-26", "Day", "TDR 013", 0, "", "Zandile", "Maintenance 12 h"],
+  ["2026-10-26", "Day", "TDR 015", 0, "", "Zandile", "Waiting for GET 11 h · tramming 1 h"],
+  ["2026-10-27", "Day", "TDR 013", 0, "0423", "Zandile", "Maintenance 12 h"],
+  ["2026-10-27", "Day", "TDR 015", 95.9, "0423", "Zandile", "Tally sheet 003418 · waiting for bit · blasting 1 h · upper jaw cylinder"],
+  ["2026-10-28", "Day", "TDR 013", 0, "0423", "Yvonne", "Waiting for drifter"],
+  ["2026-10-28", "Day", "TDR 015", 50.3, "0423", "Yvonne", "Tally sheet 000860 · retrieving rods 2 h 40 · out for diesel 1 h 43 · rod handler cylinder broke 2 h"],
+  ["2026-10-28", "Night", "TDR 013", 0, "0424", "Zandile", "Maintenance 12 h"],
+  ["2026-10-28", "Night", "TDR 015", 64.8, "0424", "Zandile", "Tally sheet 003419 · replacing the shank 2 h · starter rod broken 1 h"],
+  ["2026-10-29", "Day", "TDR 013", 0, "0423", "Yvonne", "Waiting for drifter"],
+  ["2026-10-29", "Day", "TDR 015", 0, "0423", "Yvonne", "Weekly maintenance 6 h · waiting for GET 4 h 30"],
+  ["2026-10-29", "Night", "TDR 013", 0, "0424", "Zandile", "Maintenance 12 h"],
+  ["2026-10-29", "Night", "TDR 015", 55.3, "0424", "Zandile", "Tally sheet 002472 · hydraulic pipe burst 4 h"],
+  ["2026-10-30", "Day", "TDR 013", 0, "0423 / 0422", "Katlego", "Drifter out for service 12 h"],
+  ["2026-10-30", "Day", "TDR 015", 64.9, "0423 / 0422", "Katlego", "Tally sheets 000595 (55.7) and 000596 (9.2) · daily maintenance 1 h 45 · tramming 2 h 35"],
+  ["2026-10-30", "Night", "TDR 013", 0, "0323", "Yvonne", "Drifter out for service 12 h"],
+  ["2026-10-30", "Night", "TDR 015", 10.3, "0323", "Yvonne", "Tally sheet 000809 · waiting for block access 5 h 30 · engine cut off 3 h · shank broke 1 h"]];
+let seedingOct26 = false;
+async function seedOct26() {
+  if (seedingOct26 || !isAdmin() || !navigator.onLine) return; seedingOct26 = true;
+  try {
+    const flag = doc(db, "fcSettings", "seed-2026-10-26-30-metres"); if ((await getDoc(flag)).exists()) return;
+    if (!(await getDoc(doc(db, "fcSettings", "seed-2026-10-metres"))).exists()) return;
+    const now = Date.now(); let n = 0;
+    for (const [date, shift, rig, m, block, sup, note] of OCT_26_30) {
+      await setDoc(doc(db, "fcMetres", `rep-${date}-${shift}-${normK(rig)}`), { date, shift, rig, block, metres: m, supervisor: sup, src: "report", note, createdAt: now + n }); n++; }
+    await setDoc(flag, { done: now, by: email, lines: n });
+    toast("Shift reports 26/10 to 30/10 loaded: 341.5 m (October 5 263.0 m)");
+  } catch (e) { console.warn(e); } finally { seedingOct26 = false; }
 }
 /* ---------- metres summary: Date | TDR 013 | TDR 015 | TDR 014 | (Month to date) ---------- */
 async function importMetres(file) {
