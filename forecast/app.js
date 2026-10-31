@@ -3,7 +3,7 @@
    Data is shared online in Firebase (admins write, managers read). */
 import {
   initializeApp, getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail,
-  initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, addDoc, setDoc, deleteDoc, getDoc, onSnapshot, query, where,
+  initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, addDoc, setDoc, deleteDoc, getDoc, getDocs, onSnapshot, query, where,
 } from "../lib/firebase.js";
 const showName = e => /@mgr\.tkroperations\.app$/.test(e || "") ? (e[0].toUpperCase() + e.slice(1, e.indexOf("@"))) : e;
 const toLogin = v => { v = String(v || "").trim(); return v.includes("@") ? v : v.toLowerCase().replace(/[^a-z0-9]/g, "") + "@mgr.tkroperations.app"; };  // managers can sign in with a username
@@ -276,6 +276,70 @@ function listOf(arr, line) {
   return `<div class="list">${rows.map(x => `<div class="it"><span>${line(x)}</span>${x._c ? `<button class="danger" data-del="${esc(x._c)}|${esc(x.id)}">Delete</button>` : '<span class="muted">from Stores</span>'}</div>`).join("") || `<div class="muted">Nothing yet.</div>`}</div>`;
 }
 const today = () => ymd(new Date());
+/* ---------- daily metres with evidence (tally sheet photos kept in Firebase, one record per photo) ---------- */
+let evDays = null;
+async function loadEvDays() { try { const s = await getDocs(query(collection(db, "fcSettings"), where("ev_kind", "==", "day"))); evDays = {}; s.docs.forEach(d => { const v = d.data(); evDays[v.ev_date] = v.n || 0; }); render(); } catch (e) { console.warn(e); evDays = {}; } }
+function dailyCard() {
+  if (evDays === null) { evDays = {}; loadEvDays(); }
+  const by = {}; metres.forEach(x => { const d = x.date; by[d] = by[d] || { t: 0, r: {} }; by[d].t += num(x.metres); const k = x.rig === "Not allocated" ? "Unassigned" : x.rig; by[d].r[k] = (by[d].r[k] || 0) + num(x.metres); });
+  const days = Object.keys(by).sort().reverse().slice(0, 45);
+  return `<section class="card"><h2>Daily metres and evidence</h2>
+    <p class="muted" style="margin-top:0">Tap Evidence to download that day's metres with the signed tally sheets (PDF).${isAdmin() ? " Admin can add a tally sheet photo to any day with + Photo." : ""}</p>
+    <div class="tbl"><table><thead><tr><th>Date</th><th>TDR 013</th><th>TDR 015</th><th>Unassigned</th><th>Day total</th><th>Evidence</th></tr></thead><tbody>
+    ${days.map(d => `<tr><td><b>${fmt(d)}</b></td><td>${M1(by[d].r["TDR 013"] || 0)}</td><td>${M1(by[d].r["TDR 015"] || 0)}</td><td>${by[d].r.Unassigned ? M1(by[d].r.Unassigned) : ""}</td><td><b>${M1(by[d].t)}</b></td>
+      <td style="white-space:nowrap">${evDays[d] ? `<button data-ev="${d}">Evidence (${evDays[d]})</button>` : '<span class="muted">No tally sheet</span>'}${isAdmin() ? ` <label class="ghost" style="cursor:pointer;padding:6px 10px;border:1px solid var(--line);border-radius:8px">+ Photo<input type="file" accept="image/*" data-evadd="${d}" hidden></label>` : ""}</td></tr>`).join("")}
+    </tbody></table></div></section>`;
+}
+async function shrinkB64(file, max = 1400) {
+  const url = URL.createObjectURL(file); const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+  const k = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement("canvas"); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+  const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+  let q = 0.7, d = c.toDataURL("image/jpeg", q); while (d.length > 900000 && q > 0.3) { q -= 0.1; d = c.toDataURL("image/jpeg", q); } return d;
+}
+async function saveEvidence(date, rig, shift, note, data, key) {
+  const id = "ev_" + (key || date + "_" + Date.now().toString(36)).replace(/[^\w-]/g, "_");
+  await setDoc(doc(db, "fcSettings", id), { ev_kind: "sheet", ev_date: date, rig, shift, note, data, by: email, at: Date.now() });
+  const s = await getDocs(query(collection(db, "fcSettings"), where("ev_kind", "==", "sheet"), where("ev_date", "==", date)));
+  await setDoc(doc(db, "fcSettings", "evday_" + date), { ev_kind: "day", ev_date: date, n: s.size });
+  evDays[date] = s.size;
+}
+async function importEvidence(file) {
+  const say = t => { const el = $("evMsg"); if (el) el.textContent = t; };
+  try {
+    await loadLib("../lib/jszip.min.js"); const z = await JSZip.loadAsync(file);
+    const names = Object.keys(z.files).filter(n => /\.jpe?g$/i.test(n)).sort(); let meta = {};
+    if (z.files["evidence.json"]) meta = JSON.parse(await z.files["evidence.json"].async("string"));
+    let n = 0;
+    for (const nm of names) {
+      const base = nm.split("/").pop(), m = base.match(/^(\d{4}-\d\d-\d\d)_(TDR\d{3})_(Day|Night)_(\d+)/); if (!m) continue;
+      say(`Saving ${++n} of ${names.length}…`);
+      const data = "data:image/jpeg;base64," + await z.files[nm].async("base64");
+      await saveEvidence(m[1], "TDR " + m[2].slice(3), m[3], (meta[base] || ""), data, base.replace(/\.jpe?g$/i, ""));
+    }
+    say(`Done: ${n} tally sheet photos saved. They now show under Metres → Daily metres and evidence.`); render();
+  } catch (x) { console.warn(x); say(x?.code === "permission-denied" ? "Only an admin can import evidence." : "The file couldn't be read. Choose the evidence ZIP file."); }
+}
+async function evidencePdf(date) {
+  toast("Making the evidence PDF…");
+  try { await loadLib("../lib/jspdf.umd.min.js"); } catch { toast("Open the app once with signal, then try again."); return; }
+  const s = await getDocs(query(collection(db, "fcSettings"), where("ev_kind", "==", "sheet"), where("ev_date", "==", date)));
+  const sheets = s.docs.map(d => d.data()).sort((a, b) => (a.rig + (a.shift === "Night" ? 2 : 1)).localeCompare(b.rig + (b.shift === "Night" ? 2 : 1)));
+  const { jsPDF } = window.jspdf, P = new jsPDF({ unit: "mm", format: "a4" }), W = 210, H = 297;
+  const day = metres.filter(x => x.date === date), sum = r => day.filter(x => r === "Unassigned" ? x.rig === "Not allocated" : x.rig === r).reduce((n, x) => n + num(x.metres), 0);
+  let logo = null; try { const bl = await (await fetch("../icons/icon-192.png")).blob(); logo = await new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(bl); }); } catch {}
+  const band = sub => { P.setFillColor(17, 17, 17); P.rect(0, 0, W, 26, "F"); P.setFillColor(212, 161, 42); P.rect(0, 26, W, 1.2, "F"); if (logo) P.addImage(logo, "PNG", 8, 4, 18, 18);
+    P.setTextColor(255, 255, 255); P.setFont("helvetica", "bold"); P.setFontSize(12); P.text("TKR OPERATIONS – DRILLING METRES EVIDENCE", 30, 11); P.setTextColor(212, 161, 42); P.setFontSize(14); P.text(sub, 30, 20); };
+  const head = `${fmt(date)} · TDR 013 ${M1(sum("TDR 013"))} m · TDR 015 ${M1(sum("TDR 015"))} m` + (sum("Unassigned") ? ` · unassigned ${M1(sum("Unassigned"))} m` : "");
+  band(head); let y = 34, first = true;
+  for (const sh of sheets) {
+    const im = await new Promise(r => { const i = new Image(); i.onload = () => r(i); i.src = sh.data; }); const maxW = W - 20, maxH = (H - 50) / 2 - 8, k = Math.min(maxW / im.width, maxH / im.height);
+    if (y + im.height * k + 8 > H - 10) { P.addPage(); band(head); y = 34; }
+    P.setTextColor(0, 0, 0); P.setFont("helvetica", "bold"); P.setFontSize(9); P.text(`${sh.rig} · ${sh.shift} shift${sh.note ? "  –  " + sh.note : ""}`, 10, y); y += 2;
+    P.addImage(sh.data, "JPEG", 10, y, im.width * k, im.height * k); y += im.height * k + 8; first = false;
+  }
+  if (!sheets.length) { P.setFontSize(11); P.text("No tally sheet saved for this day.", 10, 40); }
+  const blob = P.output("blob"), { deliver } = await import("../lib/deliver.js"); deliver(blob, `TKR_Drilling_Evidence_${fmt(date).replace(/\//g, "-")}.pdf`);
+}
 function metresView() {
   const first = metres.map(x => x.date).sort()[0] || today().slice(0, 8) + "01";
   mxFrom = mxFrom || first; mxTo = mxTo || addDays(today(), -1);
@@ -285,6 +349,7 @@ function metresView() {
       <label style="flex:1 1 150px">To <input type="date" id="mxTo" value="${mxTo}" min="${first}" max="${today()}"></label>
       <button class="primary" id="mxGo" style="flex:1 1 220px;min-height:48px">Download machines and metres</button></div>
     <p style="margin:10px 0 0;font-size:18px"><b>${fmt(mxFrom)}</b> to <b>${fmt(mxTo)}</b></p></section>
+    ${dailyCard()}
     <section class="card"><h2>Add metres</h2>
     <form id="fMetres" class="grid" autocomplete="off">
       <label>Date <input type="date" name="date" value="${addDays(today(), -1)}" required></label>
@@ -328,6 +393,9 @@ function importView() {
     <p class="muted">Lines you typed in this app are kept. Don't type a day here that is also in the file, or it counts twice.</p>
     <input type="file" id="impFile" accept=".xlsb,.xlsx,.xls">
     <p id="impMsg" class="muted">${esc(impStatus)}</p></section>
+    <section class="card"><h2>Import tally sheet evidence</h2>
+    <p style="margin-top:0">Choose the evidence ZIP file (tally sheet photos named by date, rig and shift). Each photo is saved once; importing the same file again does not make copies.</p>
+    <input type="file" id="evFile" accept=".zip"><p id="evMsg" class="muted"></p></section>
     <section class="card"><h2>Import a metres summary</h2>
     <p style="margin-top:0">Choose an Excel with one row per date: <b>Date</b>, <b>TDR 013</b>, <b>TDR 015</b>, <b>TDR 014</b>, and if you have it <b>Month to date</b>. The metres for those dates replace whatever the app had for them, so nothing counts twice.</p>
     <p class="muted">With a Month to date column, any site metres not split by rig are added per day as "Not allocated", so the month to date matches the site total. They count in month to date and cost per metre, not in a rig's average.</p>
@@ -341,6 +409,7 @@ app.addEventListener("click", async e => {
   if (b.dataset.tab) { tab = b.dataset.tab; render(); return; }
   if (b.dataset.del) { const [c, id] = b.dataset.del.split("|"); if (confirm("Delete this line?")) deleteDoc(doc(db, c, id)).catch(fail); return; }
   if (b.id === "msgBtn") { const t = message(calc(reportDate)); try { await navigator.clipboard.writeText(t); toast("Message copied. Paste it into WhatsApp."); } catch { prompt("Copy the message:", t); } return; }
+  if (b.dataset.ev) { b.disabled = true; try { await evidencePdf(b.dataset.ev); } catch (x) { console.warn(x); toast("The evidence PDF couldn't be made."); } b.disabled = false; return; }
   if (b.id === "mxGo") { const f = $("mxFrom").value || mxFrom, t = $("mxTo").value || mxTo; if (f > t) { toast("Choose a From date before the To date."); return; }
     b.disabled = true; b.textContent = "Making the Excel file…"; try { await exportMetres(f, t); } catch (x) { console.warn(x); toast("The Excel file couldn't be made."); } render(); return; }
   if (b.id === "xlBtn") { b.disabled = true; b.textContent = "Making the Excel file…"; try { await exportExcel(calc(reportDate)); } catch (x) { console.warn(x); toast("The Excel file couldn't be made."); } render(); }
@@ -350,6 +419,10 @@ app.addEventListener("change", async e => {
   if (e.target.id === "rd") { reportDate = e.target.value || ymd(new Date()); render(); }
   if (e.target.id === "impFile") importFile(e.target.files[0]);
   if (e.target.id === "metFile") importMetres(e.target.files[0]);
+  if (e.target.id === "evFile") importEvidence(e.target.files[0]);
+  if (e.target.dataset.evadd) { const d = e.target.dataset.evadd, f = e.target.files[0]; if (!f) return;
+    const rig = prompt("Which rig? Type 013 or 015", "015"); if (!rig) return; const shift = confirm("Night shift? OK = Night, Cancel = Day") ? "Night" : "Day";
+    try { toast("Saving the photo…"); await saveEvidence(d, "TDR " + rig.replace(/\D/g, "").padStart(3, "0"), shift, "", await shrinkB64(f)); toast("Tally sheet saved"); render(); } catch (x) { fail(x); } }
 });
 app.addEventListener("submit", async e => {
   e.preventDefault(); const f = e.target, v = Object.fromEntries(new FormData(f).entries()), now = Date.now();
