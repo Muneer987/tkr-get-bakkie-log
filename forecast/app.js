@@ -19,6 +19,9 @@ let db; try { db = initializeFirestore(fbApp, { localCache: persistentLocalCache
 
 /* ---------- helpers ---------- */
 const $ = id => document.getElementById(id);
+/* Private link for loading the tally sheets: …/forecast/#evkey=… The key is never in the code; the photos on the site are encrypted. */
+const EV_HASH = (location.hash.match(/evkey=([\w-]+)/) || [])[1] || "";
+if (EV_HASH) history.replaceState(null, "", location.pathname + location.search);
 const pad = n => String(n).padStart(2, "0");
 const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const parse = s => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
@@ -72,7 +75,7 @@ function gateOrApp() {
   $("gate").hidden = true; app.hidden = false; $("signBtn").hidden = false; $("who").textContent = showName(email) + (isAdmin() ? " · admin" : " · manager");
   if (subs.length === 1) {
     const live = (name, set) => subs.push(onSnapshot(collection(db, name), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => netNote("Couldn't load. Check the signal.")));
-    live("fcMetres", v => { metres = v; if (isAdmin()) setTimeout(async () => { await seedOctober(); await seedLate(); await seedSite5200(); await seedOct26(); }, 1500); }); live("fcIssues", v => issues = v); live("fcCounts", v => counts = v);
+    live("fcMetres", v => { metres = v; if (isAdmin()) setTimeout(async () => { await seedOctober(); await seedLate(); await seedSite5200(); await seedOct26(); await autoEvidence(); }, 1500); }); live("fcIssues", v => issues = v); live("fcCounts", v => counts = v);
     const liveQ = (name, set) => subs.push(onSnapshot(query(collection(db, name), where("store", "==", "drill")), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => console.warn(e)));
     liveQ("stMoves", v => stMoves = v); liveQ("stCounts", v => stCounts = v);
     subs.push(onSnapshot(doc(db, "stConfig", "items"), s => { stPrice = {}; (s.exists() ? s.data().list || [] : []).forEach(i => { if (i.getKey && num(i.price) > 0) stPrice[i.getKey] = num(i.price); }); settings = mergeSettings(rawSettings); render(); }, () => {}));
@@ -284,12 +287,12 @@ function dailyCard() {
   const by = {}; metres.forEach(x => { const d = x.date; by[d] = by[d] || { t: 0, r: {} }; by[d].t += num(x.metres); const k = x.rig === "Not allocated" ? "Unassigned" : x.rig; by[d].r[k] = (by[d].r[k] || 0) + num(x.metres); });
   const days = Object.keys(by).sort().reverse().slice(0, 45);
   return `<section class="card"><h2>Daily metres and evidence</h2>
-    <p class="muted" style="margin-top:0">Tap Evidence to download that day's metres with the signed tally sheets (PDF).${isAdmin() ? " Admin can add a tally sheet photo to any day with + Photo." : ""}</p>
-    ${isAdmin() ? `<div style="border:2px dashed var(--gold);border-radius:10px;padding:12px;margin-bottom:12px"><b>Load the October tally sheets</b> – choose the file <b>TKR_Tally_Sheet_Evidence_October_2026.zip</b> (sent in the chat). It takes about a minute; loading it again does not make copies.
+    <p class="muted" style="margin-top:0">Tap See tally sheet next to a day to see its signed tally sheets. Download PDF is on that page.${isAdmin() ? " Admin can add a tally sheet photo to any day with + Photo." : ""}</p>
+    ${isAdmin() ? `<div style="border:2px dashed var(--gold);border-radius:10px;padding:12px;margin-bottom:12px"><b>Tally sheets not showing?</b> Choose the file <b>TKR_Tally_Sheet_Evidence_October_2026.zip</b> (sent in the chat). It takes about a minute; loading it again does not make copies.
       <div style="margin-top:8px"><label class="primary" style="display:inline-flex;align-items:center;min-height:44px;padding:8px 16px;border-radius:8px;background:var(--gold);color:#141006;font-weight:700;cursor:pointer">Choose the tally sheet file<input type="file" id="evFile" accept=".zip" hidden></label> <span id="evMsg" class="muted"></span></div></div>` : ""}
-    <div class="tbl"><table><thead><tr><th>Date</th><th>TDR 013</th><th>TDR 015</th><th>Unassigned</th><th>Day total</th><th>Evidence</th></tr></thead><tbody>
+    <div class="tbl"><table><thead><tr><th>Date</th><th>TDR 013</th><th>TDR 015</th><th>Unassigned</th><th>Day total</th><th>Tally sheet</th></tr></thead><tbody>
     ${days.map(d => `<tr><td><b>${fmt(d)}</b></td><td>${M1(by[d].r["TDR 013"] || 0)}</td><td>${M1(by[d].r["TDR 015"] || 0)}</td><td>${by[d].r.Unassigned ? M1(by[d].r.Unassigned) : ""}</td><td><b>${M1(by[d].t)}</b></td>
-      <td style="white-space:nowrap">${evDays[d] ? `<button data-ev="${d}">Evidence (${evDays[d]})</button>` : '<span class="muted">No tally sheet</span>'}${isAdmin() ? ` <label class="ghost" style="cursor:pointer;padding:6px 10px;border:1px solid var(--line);border-radius:8px">+ Photo<input type="file" accept="image/*" data-evadd="${d}" hidden></label>` : ""}</td></tr>`).join("")}
+      <td style="white-space:nowrap">${evDays[d] ? `<button class="primary" data-evsee="${d}">See tally sheet (${evDays[d]})</button>` : '<span class="muted">No tally sheet</span>'}${isAdmin() ? ` <label class="ghost" style="cursor:pointer;padding:6px 10px;border:1px solid var(--line);border-radius:8px">+ Photo<input type="file" accept="image/*" data-evadd="${d}" hidden></label>` : ""}</td></tr>`).join("")}
     </tbody></table></div></section>`;
 }
 async function shrinkB64(file, max = 1400) {
@@ -306,7 +309,7 @@ async function saveEvidence(date, rig, shift, note, data, key) {
   evDays[date] = s.size;
 }
 async function importEvidence(file) {
-  const say = t => { const el = $("evMsg"); if (el) el.textContent = t; };
+  const say = t => { const el = $("evMsg"); if (el) el.textContent = t; else if (/^Saving \d*0 of/.test(t)) toast("Tally sheets: " + t); };
   try {
     await loadLib("../lib/jszip.min.js"); const z = await JSZip.loadAsync(file);
     const names = Object.keys(z.files).filter(n => /\.jpe?g$/i.test(n)).sort(); let meta = {};
@@ -318,8 +321,43 @@ async function importEvidence(file) {
       const data = "data:image/jpeg;base64," + await z.files[nm].async("base64");
       await saveEvidence(m[1], "TDR " + m[2].slice(3), m[3], (meta[base] || ""), data, base.replace(/\.jpe?g$/i, ""));
     }
-    say(`Done: ${n} tally sheet photos saved. They now show under Metres → Daily metres and evidence.`); render();
+    say(`Done: ${n} tally sheet photos saved. They now show under Metres → Daily metres and evidence.`); render(); return n;
   } catch (x) { console.warn(x); say(x?.code === "permission-denied" ? "Only an admin can import evidence." : "The file couldn't be read. Choose the evidence ZIP file."); }
+}
+let evAuto = false;
+async function autoEvidence() {
+  if (evAuto || !isAdmin() || !navigator.onLine) return; evAuto = true;
+  try {
+    const kd = doc(db, "fcSettings", "evkey-2026-10");
+    if (EV_HASH) await setDoc(kd, { k: EV_HASH, by: email, at: Date.now() });
+    const flag = doc(db, "fcSettings", "ev-auto-2026-10"); if ((await getDoc(flag)).exists()) return;
+    const ks = await getDoc(kd); if (!ks.exists()) return;
+    toast("Loading the October tally sheets into the app. Keep the app open for a few minutes.");
+    const k = ks.data().k.replace(/-/g, "+").replace(/_/g, "/"); const raw = Uint8Array.from(atob(k + "=".repeat((4 - k.length % 4) % 4)), c => c.charCodeAt(0));
+    const key = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["decrypt"]);
+    const res = await fetch("ev/oct2026.bin", { cache: "no-store" }); if (!res.ok) throw new Error("bundle " + res.status);
+    const buf = new Uint8Array(await res.arrayBuffer());
+    const zip = await crypto.subtle.decrypt({ name: "AES-GCM", iv: buf.slice(0, 12) }, key, buf.slice(12));
+    const n = await importEvidence(zip);
+    if (n) { await setDoc(flag, { done: Date.now(), by: email, n }); toast(`Tally sheets loaded: ${n} photos. Tap See tally sheet next to any day.`); render(); }
+  } catch (e) { console.warn(e); toast("The tally sheets couldn't load yet. Open the app again with signal."); }
+}
+async function showSheets(date) {
+  toast("Opening the tally sheets…");
+  const s = await getDocs(query(collection(db, "fcSettings"), where("ev_kind", "==", "sheet"), where("ev_date", "==", date)));
+  const L = s.docs.map(d => d.data()).sort((a, b) => (a.rig + (a.shift === "Night" ? 2 : 1)).localeCompare(b.rig + (b.shift === "Night" ? 2 : 1)));
+  document.getElementById("evView")?.remove();
+  const ov = document.createElement("div"); ov.id = "evView"; ov.setAttribute("role", "dialog");
+  ov.style.cssText = "position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.92);overflow:auto;padding:12px";
+  const btn = "font:inherit;font-weight:700;min-height:44px;padding:8px 14px;border-radius:8px;cursor:pointer;";
+  ov.innerHTML = `<div style="position:sticky;top:0;display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;background:#111;border:2px solid #d4a12a;border-radius:10px;padding:8px 12px;margin:0 auto 12px;max-width:900px;color:#f2efe8">
+      <b style="font-size:17px">${fmt(date)} · ${L.length} tally sheet${L.length === 1 ? "" : "s"}</b>
+      <span style="display:flex;gap:8px"><button data-evpdf="${date}" style="${btn}background:#d4a12a;color:#141006;border:1px solid #d4a12a">Download PDF</button><button data-evclose style="${btn}background:transparent;color:#f2efe8;border:1px solid #6b6558">Close</button></span></div>
+    <div style="max-width:900px;margin:0 auto">${L.map(x => `<figure style="margin:0 0 14px;background:#fff;border-radius:8px;padding:6px"><figcaption style="font:600 15px/1.35 Roboto,Arial,sans-serif;color:#111;padding:4px 2px 6px">${esc(x.rig)} · ${esc(x.shift)} shift${x.note ? " – " + esc(x.note) : ""}</figcaption><img src="${x.data}" alt="Tally sheet ${esc(x.rig)} ${esc(x.shift)}" style="width:100%;height:auto;display:block"></figure>`).join("") || '<p style="color:#fff">No tally sheet for this day.</p>'}</div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener("click", async e => { const b = e.target.closest("button"); if (!b) return;
+    if (b.hasAttribute("data-evclose")) { ov.remove(); return; }
+    if (b.dataset.evpdf) { b.disabled = true; try { await evidencePdf(b.dataset.evpdf); } catch (x) { console.warn(x); toast("The evidence PDF couldn't be made."); } b.disabled = false; } });
 }
 async function evidencePdf(date) {
   toast("Making the evidence PDF…");
@@ -363,7 +401,7 @@ function metresView() {
       <label style="grid-column:1/-1">Status / delays <input name="note" placeholder="For example Drifter out for service, No drill bit, Waiting for engine"></label>
       <div style="display:flex;align-items:flex-end"><button class="primary" style="width:100%">Add</button></div>
     </form></section>
-    <section class="card"><h2>Latest metres</h2>${listOf(metres.map(x => ({ ...x, _c: "fcMetres" })), x => `${fmt(x.date)} ${esc(x.shift)} · <b>${esc(x.rig)}</b> · ${M1(num(x.metres))} m ${x.block ? "· " + esc(x.block) : ""} ${x.supervisor ? "· " + esc(x.supervisor) : ""}${x.note ? ` <span class="muted">· ${esc(x.note)}</span>` : ""}`)}</section>`;
+    <section class="card"><h2>Latest metres</h2>${listOf(metres.map(x => ({ ...x, _c: "fcMetres" })), x => `${fmt(x.date)} ${esc(x.shift)} · <b>${esc(x.rig)}</b> · ${M1(num(x.metres))} m ${x.block ? "· " + esc(x.block) : ""} ${x.supervisor ? "· " + esc(x.supervisor) : ""}${x.note ? ` <span class="muted">· ${esc(x.note)}</span>` : ""}${evDays && evDays[x.date] ? ` <button data-evsee="${x.date}" style="min-height:34px;padding:2px 10px">See tally sheet</button>` : ""}`)}</section>`;
 }
 function issuesView() {
   const list = allIssues();
@@ -411,6 +449,7 @@ app.addEventListener("click", async e => {
   if (b.dataset.tab) { tab = b.dataset.tab; render(); return; }
   if (b.dataset.del) { const [c, id] = b.dataset.del.split("|"); if (confirm("Delete this line?")) deleteDoc(doc(db, c, id)).catch(fail); return; }
   if (b.id === "msgBtn") { const t = message(calc(reportDate)); try { await navigator.clipboard.writeText(t); toast("Message copied. Paste it into WhatsApp."); } catch { prompt("Copy the message:", t); } return; }
+  if (b.dataset.evsee) { b.disabled = true; try { await showSheets(b.dataset.evsee); } catch (x) { console.warn(x); toast("The tally sheets couldn't open. Check the signal."); } b.disabled = false; return; }
   if (b.dataset.ev) { b.disabled = true; try { await evidencePdf(b.dataset.ev); } catch (x) { console.warn(x); toast("The evidence PDF couldn't be made."); } b.disabled = false; return; }
   if (b.id === "mxGo") { const f = $("mxFrom").value || mxFrom, t = $("mxTo").value || mxTo; if (f > t) { toast("Choose a From date before the To date."); return; }
     b.disabled = true; b.textContent = "Making the Excel file…"; try { await exportMetres(f, t); } catch (x) { console.warn(x); toast("The Excel file couldn't be made."); } render(); return; }

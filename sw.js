@@ -1,7 +1,7 @@
 // Opens the app straight from the phone (fast, works with no signal) and fetches any update in the
 // background; the update shows the next time the app is opened. Bump VERSION when the app files change.
 // Firebase traffic (other websites) is never touched here; Firebase keeps its own offline copy.
-const VERSION = "v67";
+const VERSION = "v68";
 const FILES = ["./", "index.html", "style.css", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-192.png", "icons/maskable-512.png", "icons/logo-96.png",
   "lib/xlsx.full.min.js", "lib/jszip.min.js", "lib/firebase.js", "lib/exceljs.min.js", "lib/deliver.js", "lib/jspdf.umd.min.js", "lib/jspdf.plugin.autotable.min.js",
@@ -17,6 +17,7 @@ self.addEventListener("activate", e => {
 });
 self.addEventListener("fetch", e => {
   if (e.request.method !== "GET" || new URL(e.request.url).origin !== self.location.origin) return;
+  if (new URL(e.request.url).pathname.endsWith(".bin")) return; // encrypted evidence: never kept in the phone cache
   e.respondWith(caches.open(VERSION).then(async c => {
     const hit = await c.match(e.request, { ignoreSearch: true });
     const fresh = fetch(e.request, { cache: "no-cache" }).then(r => { if (r.ok) c.put(e.request, r.clone()); return r; });
