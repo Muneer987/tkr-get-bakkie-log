@@ -285,6 +285,8 @@ function dailyCard() {
   const days = Object.keys(by).sort().reverse().slice(0, 45);
   return `<section class="card"><h2>Daily metres and evidence</h2>
     <p class="muted" style="margin-top:0">Tap Evidence to download that day's metres with the signed tally sheets (PDF).${isAdmin() ? " Admin can add a tally sheet photo to any day with + Photo." : ""}</p>
+    ${isAdmin() ? `<div style="border:2px dashed var(--gold);border-radius:10px;padding:12px;margin-bottom:12px"><b>Load the October tally sheets</b> – choose the file <b>TKR_Tally_Sheet_Evidence_October_2026.zip</b> (sent in the chat). It takes about a minute; loading it again does not make copies.
+      <div style="margin-top:8px"><label class="primary" style="display:inline-flex;align-items:center;min-height:44px;padding:8px 16px;border-radius:8px;background:var(--gold);color:#141006;font-weight:700;cursor:pointer">Choose the tally sheet file<input type="file" id="evFile" accept=".zip" hidden></label> <span id="evMsg" class="muted"></span></div></div>` : ""}
     <div class="tbl"><table><thead><tr><th>Date</th><th>TDR 013</th><th>TDR 015</th><th>Unassigned</th><th>Day total</th><th>Evidence</th></tr></thead><tbody>
     ${days.map(d => `<tr><td><b>${fmt(d)}</b></td><td>${M1(by[d].r["TDR 013"] || 0)}</td><td>${M1(by[d].r["TDR 015"] || 0)}</td><td>${by[d].r.Unassigned ? M1(by[d].r.Unassigned) : ""}</td><td><b>${M1(by[d].t)}</b></td>
       <td style="white-space:nowrap">${evDays[d] ? `<button data-ev="${d}">Evidence (${evDays[d]})</button>` : '<span class="muted">No tally sheet</span>'}${isAdmin() ? ` <label class="ghost" style="cursor:pointer;padding:6px 10px;border:1px solid var(--line);border-radius:8px">+ Photo<input type="file" accept="image/*" data-evadd="${d}" hidden></label>` : ""}</td></tr>`).join("")}
@@ -395,7 +397,7 @@ function importView() {
     <p id="impMsg" class="muted">${esc(impStatus)}</p></section>
     <section class="card"><h2>Import tally sheet evidence</h2>
     <p style="margin-top:0">Choose the evidence ZIP file (tally sheet photos named by date, rig and shift). Each photo is saved once; importing the same file again does not make copies.</p>
-    <input type="file" id="evFile" accept=".zip"><p id="evMsg" class="muted"></p></section>
+    <p class="muted">Use the button under Metres → Daily metres and evidence.</p></section>
     <section class="card"><h2>Import a metres summary</h2>
     <p style="margin-top:0">Choose an Excel with one row per date: <b>Date</b>, <b>TDR 013</b>, <b>TDR 015</b>, <b>TDR 014</b>, and if you have it <b>Month to date</b>. The metres for those dates replace whatever the app had for them, so nothing counts twice.</p>
     <p class="muted">With a Month to date column, any site metres not split by rig are added per day as "Not allocated", so the month to date matches the site total. They count in month to date and cost per metre, not in a rig's average.</p>
