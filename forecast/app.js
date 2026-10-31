@@ -75,7 +75,7 @@ function gateOrApp() {
   $("gate").hidden = true; app.hidden = false; $("signBtn").hidden = false; $("who").textContent = showName(email) + (isAdmin() ? " · admin" : " · manager");
   if (subs.length === 1) {
     const live = (name, set) => subs.push(onSnapshot(collection(db, name), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => netNote("Couldn't load. Check the signal.")));
-    live("fcMetres", v => { metres = v; if (isAdmin()) setTimeout(async () => { await seedOctober(); await seedLate(); await seedSite5200(); await seedOct26(); await autoEvidence(); }, 1500); }); live("fcIssues", v => issues = v); live("fcCounts", v => counts = v);
+    live("fcMetres", v => { metres = v; if (isAdmin()) setTimeout(async () => { await seedOctober(); await seedLate(); await seedSite5200(); await seedOct26(); await seedEvidenceMetres(); await autoEvidence(); }, 1500); }); live("fcIssues", v => issues = v); live("fcCounts", v => counts = v);
     const liveQ = (name, set) => subs.push(onSnapshot(query(collection(db, name), where("store", "==", "drill")), s => { set(s.docs.map(d => ({ id: d.id, ...d.data() }))); render(); }, e => console.warn(e)));
     liveQ("stMoves", v => stMoves = v); liveQ("stCounts", v => stCounts = v);
     subs.push(onSnapshot(doc(db, "stConfig", "items"), s => { stPrice = {}; (s.exists() ? s.data().list || [] : []).forEach(i => { if (i.getKey && num(i.price) > 0) stPrice[i.getKey] = num(i.price); }); settings = mergeSettings(rawSettings); render(); }, () => {}));
@@ -559,6 +559,22 @@ const OCT_2026 = [["01", 170.0, 70.0, 240.0], ["02", 170.0, 80.4, 483.0], ["03",
   ["13", 69.5, 99.5, 3079.3], ["14", 164.4, 218.1, 3461.8], ["15", 147.1, 221.1, 3830.0], ["16", 33.7, 16.9, 3880.6], ["17", 0.0, 99.5, 4006.3], ["18", 132.1, 104.7, 4243.1],
   ["19", 71.8, 24.9, 4426.5], ["20", 59.4, 76.2, 4562.1], ["21", 34.8, 83.7, 4680.6], ["22", 0.0, 208.3, 4888.9], ["23", 0.0, 32.6, 4921.5]]
   .map(([d, a, b, mtd]) => ({ date: "2026-10-" + d, rigs: { "TDR 013": a, "TDR 015": b, "TDR 014": 0 }, mtd }));
+/* October metres as per the evidence only (chat shift reports and tally sheets), 01/10 to 23/10. Replaces the October summary figures:
+   site totals not split by rig (269.1 m) and shifts with nothing on record (03/10 night, 09/10 night, 18/10 night TDR 013, 06/10 day TDR 013) are not counted;
+   tally sheets left out of the summary are added (08/10 night TDR 013 72.7, 11/10 day TDR 015 80.9, 16/10 day TDR 013 42.0). October to 30/10: 4 812.3 m. */
+const OCT_EVIDENCE = [["01", 108.6, 134.5], ["02", 170.0, 80.4], ["03", 46.2, 117.4], ["04", 166.9, 93.6], ["05", 142.5, 192.7], ["06", 91.7, 228.0], ["07", 80.0, 10.8], ["08", 169.4, 65.3], ["09", 85.3, 31.4], ["10", 0.0, 144.0], ["11", 50.4, 218.3], ["12", 0.0, 49.5], ["13", 69.5, 99.5], ["14", 164.4, 218.1], ["15", 147.1, 221.1], ["16", 75.7, 16.9], ["17", 0.0, 99.5], ["18", 55.5, 104.7], ["19", 71.8, 24.9], ["20", 59.4, 76.2], ["21", 34.8, 83.7], ["22", 0.0, 208.3], ["23", 0.0, 32.6]]
+  .map(([d, a, b]) => ({ date: "2026-10-" + d, rigs: { "TDR 013": a, "TDR 015": b, "TDR 014": 0 }, mtd: null }));
+let seedingEv = false;
+async function seedEvidenceMetres() {
+  if (seedingEv || !isAdmin() || !navigator.onLine) return; seedingEv = true;
+  try {
+    const flag = doc(db, "fcSettings", "seed-2026-10-evidence-metres"); if ((await getDoc(flag)).exists()) return;
+    if (!(await getDoc(doc(db, "fcSettings", "seed-2026-10-metres"))).exists()) return;
+    const n = await writeSummary(OCT_EVIDENCE, summaryLines(OCT_EVIDENCE));
+    await setDoc(flag, { done: Date.now(), by: email, lines: n });
+    toast("October metres as per the chat reports and tally sheets: 4 812.3 m to 30/10");
+  } catch (e) { console.warn(e); } finally { seedingEv = false; }
+}
 let seeding = false;
 async function seedOctober() {
   if (seeding || !isAdmin() || !navigator.onLine) return; seeding = true;
