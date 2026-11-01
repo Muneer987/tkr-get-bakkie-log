@@ -568,6 +568,8 @@ let seedingEv = false;
 async function seedEvidenceMetres() {
   if (seedingEv || !isAdmin() || !navigator.onLine) return; seedingEv = true;
   try {
+    // October has no metres outside the evidence: remove any site figure not split by rig (for example the old 278.5 m that made 5 200 m)
+    for (const x of metres.filter(x => String(x.date || "").startsWith("2026-10") && (x.rig === "Not allocated" || x.id === "adj-2026-10-25-NA"))) await deleteDoc(doc(db, "fcMetres", x.id));
     const flag = doc(db, "fcSettings", "seed-2026-10-evidence-metres"); if ((await getDoc(flag)).exists()) return;
     if (!(await getDoc(doc(db, "fcSettings", "seed-2026-10-metres"))).exists()) return;
     const n = await writeSummary(OCT_EVIDENCE, summaryLines(OCT_EVIDENCE));
